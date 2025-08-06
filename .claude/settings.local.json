@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir:*)",
+      "Bash(go get:*)",
+      "Bash(go run:*)",
+      "Bash(curl:*)",
+      "Bash(pkill:*)",
+      "Bash(go build:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(docker compose:*)",
+      "Bash(docker:*)",
+      "Bash(colima start:*)",
+      "Bash(colima status:*)"
+    ],
+    "deny": []
+  }
+}

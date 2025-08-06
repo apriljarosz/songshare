@@ -1,0 +1,69 @@
+services:
+  mongodb:
+    image: mongo:8.0
+    container_name: songshare_mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-password}
+      MONGO_INITDB_DATABASE: songshare
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+      - mongo-config:/data/configdb
+    networks:
+      - songshare-network
+    healthcheck:
+      test: echo 'db.stats().ok' | mongosh localhost:27017/test --quiet
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  valkey:
+    image: valkey/valkey:8.0-alpine
+    container_name: songshare_valkey
+    restart: unless-stopped
+    command: valkey-server --requirepass ${VALKEY_PASSWORD:-valkey123} --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - valkey-data:/data
+    networks:
+      - songshare-network
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: songshare_app
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - MONGODB_URL=mongodb://${MONGO_ROOT_USERNAME:-admin}:${MONGO_ROOT_PASSWORD:-password}@mongodb:27017/songshare?authSource=admin
+      - VALKEY_URL=valkey://:${VALKEY_PASSWORD:-valkey123}@valkey:6379
+      - GIN_MODE=${GIN_MODE:-debug}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    networks:
+      - songshare-network
+
+volumes:
+  mongo-data:
+  mongo-config:
+  valkey-data:
+
+networks:
+  songshare-network:
+    driver: bridge
