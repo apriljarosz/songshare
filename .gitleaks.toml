@@ -1,0 +1,104 @@
+# Gitleaks configuration for songshare project
+title = "Songshare Security Rules"
+
+# Custom rules for this project
+[[rules]]
+description = "Spotify Client Secret"
+id = "spotify-client-secret"
+regex = '''(?i)(spotify[_-]?client[_-]?secret[_-]?)\s*[:=]\s*['"]?([a-f0-9]{32})['"]?'''
+secretGroup = 2
+
+[[rules]]
+description = "Spotify Client ID"
+id = "spotify-client-id"
+regex = '''(?i)(spotify[_-]?client[_-]?id[_-]?)\s*[:=]\s*['"]?([a-f0-9]{32})['"]?'''
+secretGroup = 2
+
+[[rules]]
+description = "Apple Music Team ID"
+id = "apple-music-team-id" 
+regex = '''(?i)(apple[_-]?music[_-]?team[_-]?id[_-]?)\s*[:=]\s*['"]?([A-Z0-9]{10})['"]?'''
+secretGroup = 2
+
+[[rules]]
+description = "Apple Music Key ID"
+id = "apple-music-key-id"
+regex = '''(?i)(apple[_-]?music[_-]?key[_-]?id[_-]?)\s*[:=]\s*['"]?([A-Z0-9]{10})['"]?'''
+secretGroup = 2
+
+[[rules]]
+description = "MongoDB Connection String with Password"
+id = "mongodb-connection-password"
+regex = '''mongodb:\/\/[^:]+:([^@\s]+)@'''
+secretGroup = 1
+
+[[rules]]
+description = "Redis/Valkey Connection String with Password"  
+id = "redis-connection-password"
+regex = '''(?:redis|valkey):\/\/:([^@\s]+)@'''
+secretGroup = 1
+
+[[rules]]
+description = "Hardcoded Password in Assignment"
+id = "hardcoded-password"
+regex = '''(?i)password\s*[:=]\s*['"]([^'"\s]{6,})['"]'''
+secretGroup = 1
+
+[[rules]]
+description = "Hardcoded Secret in Assignment" 
+id = "hardcoded-secret"
+regex = '''(?i)secret\s*[:=]\s*['"]([a-zA-Z0-9]{16,})['"]'''
+secretGroup = 1
+
+[[rules]]
+description = "Hardcoded API Key in Assignment"
+id = "hardcoded-api-key"
+regex = '''(?i)(?:api[_-]?key|apikey)\s*[:=]\s*['"]([a-zA-Z0-9]{20,})['"]'''
+secretGroup = 1
+
+[[rules]]
+description = "Private Key File Content"
+id = "private-key-content"
+regex = '''-----BEGIN (?:RSA |EC |)PRIVATE KEY-----'''
+
+[[rules]]
+description = "JWT Token"
+id = "jwt-token"
+regex = '''ey[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*'''
+
+# File path allowlists - files that are allowed to contain secrets
+[allowlist]
+paths = [
+    ".env.example",
+    "docker-compose.yml",
+    ".gitleaks.toml",
+    "README.md"
+]
+
+# Commit allowlist - specific commits to ignore
+commits = []
+
+# Entropy settings
+[allowlist.entropy]
+# Allow lower entropy for common test values
+min = 3.5
+
+# Regex allowlist - patterns that should be ignored
+regexes = [
+    # Example/placeholder values
+    "your_spotify_client_id",
+    "your_spotify_client_secret", 
+    "your_key_id",
+    "your_team_id",
+    "password", # When it's literally the word "password" as a default
+    "valkey123", # Default example passwords
+    "admin",
+    # Variable names and function parameters
+    "clientSecret,",
+    "token\\.AccessToken",
+    "clientOption\\.Password",
+    # Common code patterns that aren't actual secrets
+    "\\w+Secret\\w*",
+    "\\w+Password\\w*",
+    "\\w+Token\\w*"
+]
