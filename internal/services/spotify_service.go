@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 	"golang.org/x/oauth2/clientcredentials"
+	"songshare/internal/cache"
 )
 
 // spotifyService implements PlatformService for Spotify
@@ -21,6 +23,7 @@ type spotifyService struct {
 	tokenSource  *clientcredentials.Config
 	accessToken  string
 	tokenExpiry  time.Time
+	cache        cache.Cache
 	mu           sync.RWMutex
 }
 
@@ -30,8 +33,15 @@ const (
 	spotifyAPIURL    = "https://api.spotify.com/v1"
 )
 
+// Cache TTL constants for API responses
+const (
+	spotifyTrackCacheTTL  = 4 * time.Hour  // Individual track lookups
+	spotifySearchCacheTTL = 2 * time.Hour  // Search results
+	spotifyISRCCacheTTL   = 24 * time.Hour // ISRC-based lookups (very stable)
+)
+
 // NewSpotifyService creates a new Spotify service
-func NewSpotifyService(clientID, clientSecret string) PlatformService {
+func NewSpotifyService(clientID, clientSecret string, cache cache.Cache) PlatformService {
 	tokenSource := &clientcredentials.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
@@ -49,6 +59,7 @@ func NewSpotifyService(clientID, clientSecret string) PlatformService {
 		clientID:     clientID,
 		clientSecret: clientSecret,
 		tokenSource:  tokenSource,
+		cache:        cache,
 	}
 }
 
@@ -82,6 +93,15 @@ func (s *spotifyService) ParseURL(url string) (*TrackInfo, error) {
 
 // GetTrackByID fetches track details from Spotify API
 func (s *spotifyService) GetTrackByID(ctx context.Context, trackID string) (*TrackInfo, error) {
+	// Check cache first
+	cacheKey := fmt.Sprintf("api:spotify:track:%s", trackID)
+	if cached, err := s.cache.Get(ctx, cacheKey); err == nil && cached != nil {
+		var trackInfo TrackInfo
+		if err := json.Unmarshal(cached, &trackInfo); err == nil {
+			return &trackInfo, nil
+		}
+	}
+
 	if err := s.ensureValidToken(ctx); err != nil {
 		return nil, err
 	}
@@ -122,15 +142,20 @@ func (s *spotifyService) GetTrackByID(ctx context.Context, trackID string) (*Tra
 		}
 	}
 
-	return s.convertSpotifyTrack(&spotifyTrack), nil
+	trackInfo := s.convertSpotifyTrack(&spotifyTrack)
+	
+	// Cache the result
+	if data, err := json.Marshal(trackInfo); err == nil {
+		if err := s.cache.Set(ctx, cacheKey, data, spotifyTrackCacheTTL); err != nil {
+			slog.Error("Failed to cache Spotify track", "trackID", trackID, "error", err)
+		}
+	}
+	
+	return trackInfo, nil
 }
 
 // SearchTrack searches for tracks on Spotify
 func (s *spotifyService) SearchTrack(ctx context.Context, query SearchQuery) ([]*TrackInfo, error) {
-	if err := s.ensureValidToken(ctx); err != nil {
-		return nil, err
-	}
-
 	searchQuery := s.buildSearchQuery(query)
 	limit := query.Limit
 	if limit == 0 {
@@ -138,6 +163,19 @@ func (s *spotifyService) SearchTrack(ctx context.Context, query SearchQuery) ([]
 	}
 	if limit > 50 {
 		limit = 50 // Spotify API limit
+	}
+
+	// Check cache first
+	cacheKey := fmt.Sprintf("api:spotify:search:%s:limit:%d", searchQuery, limit)
+	if cached, err := s.cache.Get(ctx, cacheKey); err == nil && cached != nil {
+		var tracks []*TrackInfo
+		if err := json.Unmarshal(cached, &tracks); err == nil {
+			return tracks, nil
+		}
+	}
+
+	if err := s.ensureValidToken(ctx); err != nil {
+		return nil, err
 	}
 
 	s.mu.RLock()
@@ -176,6 +214,19 @@ func (s *spotifyService) SearchTrack(ctx context.Context, query SearchQuery) ([]
 	tracks := make([]*TrackInfo, 0, len(searchResult.Tracks.Items))
 	for _, track := range searchResult.Tracks.Items {
 		tracks = append(tracks, s.convertSpotifyTrack(&track))
+	}
+
+	// Cache the results
+	if data, err := json.Marshal(tracks); err == nil {
+		// Use longer TTL for ISRC searches since they're more stable
+		cacheTTL := spotifySearchCacheTTL
+		if query.ISRC != "" {
+			cacheTTL = spotifyISRCCacheTTL
+		}
+		
+		if err := s.cache.Set(ctx, cacheKey, data, cacheTTL); err != nil {
+			slog.Error("Failed to cache Spotify search results", "query", searchQuery, "error", err)
+		}
 	}
 
 	return tracks, nil

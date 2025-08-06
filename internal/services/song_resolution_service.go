@@ -29,6 +29,11 @@ func (s *SongResolutionService) RegisterPlatform(service PlatformService) {
 	s.platformServices[service.GetPlatformName()] = service
 }
 
+// GetPlatformService returns a platform service by name
+func (s *SongResolutionService) GetPlatformService(platformName string) PlatformService {
+	return s.platformServices[platformName]
+}
+
 // ResolveFromURL resolves a song from a platform URL and returns all available platform links
 func (s *SongResolutionService) ResolveFromURL(ctx context.Context, url string) (*models.Song, error) {
 	// Parse the URL to determine platform and track ID
