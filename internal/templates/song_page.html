@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Song.Title}} - {{.Song.Artist}}</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    
+    <!-- Apple Music SVG Icon -->
+    <svg style="display: none;" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+            <symbol id="apple-music-icon" viewBox="0 0 24 24">
+                <!-- Apple Music circular icon with gradient -->
+                <circle cx="12" cy="12" r="12" fill="url(#appleMusicGradient)"/>
+                <path d="M18.013 12.063l-5.718-1.691c-.303-.09-.617.09-.705.399-.089.309.085.632.388.721l5.718 1.691c.193.057.402-.029.512-.211.11-.182.11-.406 0-.588-.11-.182-.319-.268-.195-.321zM9.845 18.857c-.89-.263-1.835.243-2.11 1.132-.275.89.243 1.835 1.132 2.11.89.275 1.835-.243 2.11-1.132.275-.89-.243-1.835-1.132-2.11zm4.458 3.338c-.302-.089-.617.09-.705.399-.089.309.085.632.388.721.302.089.617-.09.705-.399.089-.309-.085-.632-.388-.721z" fill="white"/>
+                <defs>
+                    <linearGradient id="appleMusicGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" style="stop-color:#fa233b"/>
+                        <stop offset="50%" style="stop-color:#fb5c74"/>
+                        <stop offset="100%" style="stop-color:#ff9500"/>
+                    </linearGradient>
+                </defs>
+            </symbol>
+        </defs>
+    </svg>
+    
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 2rem auto; padding: 1rem; }
+        .song-header { text-align: center; margin-bottom: 2rem; }
+        .album-art { width: 200px; height: 200px; border-radius: 12px; margin: 0 auto 1rem; box-shadow: 0 8px 32px rgba(0,0,0,0.2); display: block; }
+        .song-title { font-size: 2rem; font-weight: bold; margin-bottom: 0.5rem; }
+        .song-artist { font-size: 1.2rem; color: #666; margin-bottom: 0.5rem; }
+        .song-album { font-size: 1rem; color: #888; }
+        .platforms { display: flex; flex-direction: column; gap: 1rem; }
+        .platform-button { display: flex; align-items: center; padding: 1rem; border: 2px solid #ddd; border-radius: 8px; text-decoration: none; color: inherit; transition: all 0.2s; min-height: 60px; }
+        .platform-button:hover { border-color: #007AFF; transform: translateY(-1px); }
+        .spotify:hover { border-color: #1ED760 !important; }
+        .apple_music:hover { border-color: #f94c57 !important; }
+        .youtube_music:hover { border-color: #FF0000 !important; }
+        .deezer:hover { border-color: #FEAA2D !important; }
+        .tidal:hover { border-color: #000000 !important; }
+        .soundcloud:hover { border-color: #FF8800 !important; }
+        .platform-name { font-weight: bold; font-size: 1.1rem; display: flex; align-items: center; gap: 1rem; flex: 1; }
+        .platform-icon { width: 44px; height: 44px; flex-shrink: 0; object-fit: contain; }
+    </style>
+</head>
+<body>
+    <div class="song-header">
+        {{if .AlbumArt}}<img src="{{.AlbumArt}}" alt="Album art for {{.Song.Title}}" class="album-art">{{end}}
+        <div class="song-title">{{.Song.Title}}</div>
+        <div class="song-artist">{{.Song.Artist}}</div>
+        {{if .Song.Album}}<div class="song-album">{{.Song.Album}}</div>{{end}}
+    </div>
+    
+    <div class="platforms">
+        {{range .Platforms}}
+        <a href="{{.URL}}" target="_blank" class="platform-button {{.Platform}}" 
+           hx-get="/api/v1/analytics/click?platform={{.Platform}}&song={{$.Song.ID.Hex}}"
+           hx-trigger="mouseup"
+           hx-swap="none">
+            <div class="platform-name">
+                {{if .IconURL}}<img src="{{.IconURL}}" alt="" class="platform-icon" aria-hidden="true">{{end}}
+                {{.ButtonText}}
+            </div>
+        </a>
+        {{end}}
+        
+        {{if not .PlatformURLs}}
+        <div style="text-align: center; color: #666;">
+            <p>This song is not currently available on supported platforms.</p>
+        </div>
+        {{end}}
+    </div>
+    
+    <div style="text-align: center; margin-top: 2rem; font-size: 0.8rem; color: #999;">
+        <p>Powered by SongShare</p>
+    </div>
+</body>
+</html>
