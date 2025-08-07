@@ -51,3 +51,16 @@ tmp/
 temp/
 
 keys/
+ 
+# Cursor IDE
+# Ignore all Cursor metadata by default, but keep shared project rules tracked
+.cursor/*
+!.cursor/rules/
+!.cursor/rules/**
+
+# (Redundant with the wildcard above, kept for clarity if rules expand later)
+.cursor/*.local.json
+.cursor/settings.local.json
+.cursor/history/
+.cursor/sessions/
+.cursor/cache/
