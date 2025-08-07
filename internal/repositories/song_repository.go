@@ -21,6 +21,7 @@ type SongRepository interface {
 	// Search operations
 	Search(ctx context.Context, query string, limit int) ([]*models.Song, error)
 	FindSimilar(ctx context.Context, song *models.Song, limit int) ([]*models.Song, error)
+	FindByIDPrefix(ctx context.Context, prefix string) (*models.Song, error)
 
 	// Bulk operations
 	FindMany(ctx context.Context, ids []string) ([]*models.Song, error)

@@ -34,7 +34,7 @@ func songSearchKey(query string) string   { return "song:search:" + query }
 // Cache TTL constants
 const (
 	songCacheTTL     = 1 * time.Hour
-	searchCacheTTL   = 30 * time.Minute
+	searchCacheTTL   = 5 * time.Minute  // Extended with smart invalidation
 	negativeCacheTTL = 5 * time.Minute // For null results
 )
 
@@ -231,6 +231,27 @@ func (r *cachedSongRepository) Count(ctx context.Context) (int64, error) {
 	return r.repository.Count(ctx)
 }
 
+// FindByIDPrefix checks cache first, then repository
+func (r *cachedSongRepository) FindByIDPrefix(ctx context.Context, prefix string) (*models.Song, error) {
+	cacheKey := "song:prefix:" + prefix
+	
+	// Try cache first
+	if cached, err := r.getFromCache(ctx, cacheKey); err == nil && cached != nil {
+		return cached, nil
+	}
+
+	// Cache miss, query repository
+	song, err := r.repository.FindByIDPrefix(ctx, prefix)
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache the result
+	r.cacheResult(ctx, cacheKey, song)
+	
+	return song, nil
+}
+
 // Helper methods for cache operations
 
 // getFromCache retrieves a song from cache
@@ -330,4 +351,11 @@ func (r *cachedSongRepository) invalidateSongCache(ctx context.Context, song *mo
 
 	// Note: We don't invalidate search cache as it would be too expensive
 	// Search cache has a shorter TTL to handle this
+}
+
+// InvalidateSearchCache invalidates search cache for a specific query
+func (r *cachedSongRepository) InvalidateSearchCache(query string) {
+	key := songSearchKey(query)
+	ctx := context.Background()
+	r.cache.Delete(ctx, key)
 }

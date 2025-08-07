@@ -51,6 +51,12 @@ services:
       - MONGODB_URL=mongodb://${MONGO_ROOT_USERNAME:-admin}:${MONGO_ROOT_PASSWORD:-password}@mongodb:27017/songshare?authSource=admin
       - VALKEY_URL=valkey://:${VALKEY_PASSWORD:-valkey123}@valkey:6379
       - GIN_MODE=${GIN_MODE:-debug}
+      - BASE_URL=${BASE_URL:-http://localhost:8080}
+      - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID}
+      - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET}
+      - APPLE_MUSIC_KEY_ID=${APPLE_MUSIC_KEY_ID}
+      - APPLE_MUSIC_TEAM_ID=${APPLE_MUSIC_TEAM_ID}
+      - APPLE_MUSIC_KEY_FILE=${APPLE_MUSIC_KEY_FILE}
     depends_on:
       mongodb:
         condition: service_healthy

@@ -48,6 +48,7 @@ type SongMetadata struct {
 	Language     string    `bson:"language,omitempty" json:"language,omitempty"`
 	Popularity   int       `bson:"popularity,omitempty" json:"popularity,omitempty"`   // Platform-specific popularity score
 	Explicit     bool      `bson:"explicit,omitempty" json:"explicit,omitempty"`
+	ImageURL     string    `bson:"image_url,omitempty" json:"image_url,omitempty"`     // Album art image URL
 }
 
 // NewSong creates a new Song with default values

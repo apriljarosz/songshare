@@ -1,0 +1,125 @@
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-use-default: false
+  exclude-rules:
+    # Ignore security issues in test files
+    - path: _test\.go
+      linters:
+        - gosec
+    # Allow fmt.Print* in main files for startup logging
+    - path: main\.go
+      linters:
+        - forbidigo
+
+linters:
+  enable:
+    # Default linters
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    
+    # Additional useful linters
+    - bodyclose
+    - contextcheck
+    - dupl
+    - durationcheck
+    - errorlint
+    - exhaustive
+    - exportloopref
+    - forbidigo
+    - goconst
+    - gocritic
+    - gocyclo
+    - godot
+    - gofmt
+    - gofumpt
+    - goheader
+    - goimports
+    - gomnd
+    - gomodguard
+    - goprintffuncname
+    - gosec
+    - misspell
+    - nakedret
+    - nilerr
+    - nlreturn
+    - nolintlint
+    - prealloc
+    - revive
+    - rowserrcheck
+    - sqlclosecheck
+    - tparallel
+    - typecheck
+    - unconvert
+    - unparam
+    - wastedassign
+    - whitespace
+
+linters-settings:
+  gocyclo:
+    min-complexity: 15
+    
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+    
+  gomnd:
+    checks:
+      - argument
+      - case
+      - condition
+      - operation
+      - return
+      - assign
+    ignored-numbers:
+      - '0'
+      - '1'
+      - '2'
+      - '3'
+      - '10'
+      - '100'
+      - '1000'
+      - '1024'
+      - '60'   # seconds
+      - '3600' # hour in seconds
+      - '24'   # hours
+      - '30'   # days
+      - '200'  # HTTP OK
+      - '404'  # HTTP Not Found
+      - '500'  # HTTP Internal Server Error
+    ignored-files:
+      - "test/*.go"
+      - "*_test.go"
+      
+  gosec:
+    excludes:
+      - G204 # Subprocess launched with variable - acceptable in our use case
+      - G304 # File path provided as taint input - handled with validation
+      
+  revive:
+    rules:
+      - name: var-naming
+        disabled: true # Allow non-camelCase for acronyms like ISRC, URL, etc.
+      - name: exported
+        disabled: true # Allow unexported functions in internal packages
+
+  forbidigo:
+    forbid:
+      - ^print.*$
+      - ^fmt\.Print.*$ # Prefer structured logging
+    exclude-godoc-examples: true
+    
+  misspell:
+    locale: US
+    
+  whitespace:
+    multi-if: true
+    multi-func: true

@@ -1,0 +1,294 @@
+name: Test & Coverage
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: [ '1.23', '1.24' ]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ matrix.go-version }}
+        
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-${{ matrix.go-version }}-
+          
+    - name: Download dependencies
+      run: go mod download
+      
+    - name: Verify dependencies
+      run: go mod verify
+      
+    - name: Run unit tests
+      run: go test -v -race -timeout=60s ./...
+      
+    - name: Generate coverage report
+      if: matrix.go-version == '1.24'
+      run: go test -coverprofile=coverage.out -covermode=atomic ./...
+      
+    - name: Upload coverage to Codecov
+      if: matrix.go-version == '1.24'
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.out
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+  test-short:
+    name: Quick Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.24'
+        
+    - name: Run short tests
+      run: go test -short -timeout=30s ./...
+
+  benchmark:
+    name: Benchmark Tests
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.24'
+        
+    - name: Run benchmarks
+      run: go test -bench=. -benchmem -timeout=5m ./...
+      
+    - name: Store benchmark result
+      uses: benchmark-action/github-action-benchmark@v1
+      if: github.ref == 'refs/heads/main'
+      with:
+        name: Go Benchmark
+        tool: 'go'
+        output-file-path: benchmark.txt
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        auto-push: true
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    # Only run integration tests on main branch and PRs to main
+    if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
+    
+    services:
+      mongodb:
+        image: mongo:8.0
+        env:
+          MONGO_INITDB_DATABASE: songshare_test
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand(\"ping\")'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 27017:27017
+          
+      valkey:
+        image: valkey/valkey:7.2
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.24'
+        
+    - name: Wait for MongoDB
+      run: |
+        until mongosh --host localhost:27017 --eval "print('MongoDB is ready')"; do
+          echo "Waiting for MongoDB..."
+          sleep 2
+        done
+        
+    - name: Wait for Valkey
+      run: |
+        until valkey-cli -h localhost -p 6379 ping; do
+          echo "Waiting for Valkey..."
+          sleep 2
+        done
+        
+    - name: Set test environment
+      run: |
+        echo "MONGODB_URL=mongodb://localhost:27017/songshare_test" >> $GITHUB_ENV
+        echo "VALKEY_URL=redis://localhost:6379" >> $GITHUB_ENV
+        
+    - name: Run integration tests
+      run: go test -v -tags=integration -timeout=2m ./test/integration/...
+      
+    - name: Upload integration test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: integration-test-results
+        path: test/integration/results/
+        retention-days: 7
+
+  build:
+    name: Build & Verify
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.24'
+        
+    - name: Build application
+      run: |
+        go build -v -o songshare ./cmd/server
+        
+    - name: Verify binary
+      run: |
+        ./songshare --version || echo "Binary built successfully"
+        ls -la songshare
+        
+    - name: Build Docker image
+      run: |
+        docker build -t songshare:test .
+        
+    - name: Test Docker image
+      run: |
+        # Run container with health check
+        docker run --rm -d --name songshare-test \
+          -e MONGODB_URL=mongodb://localhost:27017/test \
+          -e VALKEY_URL=redis://localhost:6379 \
+          songshare:test
+        
+        # Wait a bit for startup
+        sleep 5
+        
+        # Check if container is running
+        if docker ps | grep songshare-test; then
+          echo "✅ Docker container started successfully"
+          docker stop songshare-test
+        else
+          echo "❌ Docker container failed to start"
+          docker logs songshare-test
+          exit 1
+        fi
+
+  lint:
+    name: Lint & Format Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.24'
+        
+    - name: Install golangci-lint
+      uses: golangci/golangci-lint-action@v3
+      with:
+        version: latest
+        args: --timeout=5m
+        
+    - name: Check formatting
+      run: |
+        if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+          echo "❌ Go code is not formatted. Please run 'go fmt ./...'"
+          gofmt -s -l .
+          exit 1
+        fi
+        echo "✅ Go code is properly formatted"
+        
+    - name: Check for unused dependencies
+      run: |
+        go mod tidy
+        if ! git diff --quiet go.mod go.sum; then
+          echo "❌ go.mod/go.sum files are not tidy. Please run 'go mod tidy'"
+          git diff go.mod go.sum
+          exit 1
+        fi
+        echo "✅ Dependencies are properly managed"
+
+  test-coverage:
+    name: Coverage Report
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.24'
+        
+    - name: Generate coverage report
+      run: |
+        go test -coverprofile=coverage.out -covermode=atomic ./...
+        go tool cover -html=coverage.out -o coverage.html
+        go tool cover -func=coverage.out
+        
+    - name: Upload coverage report
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report
+        path: |
+          coverage.out
+          coverage.html
+        retention-days: 30
+        
+    - name: Coverage Summary
+      run: |
+        echo "## Test Coverage Summary" >> $GITHUB_STEP_SUMMARY
+        echo "| Package | Coverage |" >> $GITHUB_STEP_SUMMARY
+        echo "| ------- | -------- |" >> $GITHUB_STEP_SUMMARY
+        go tool cover -func=coverage.out | grep "^songshare" | while read line; do
+          pkg=$(echo $line | awk '{print $1}')
+          cov=$(echo $line | awk '{print $3}')
+          echo "| \`$pkg\` | $cov |" >> $GITHUB_STEP_SUMMARY
+        done
+        echo "" >> $GITHUB_STEP_SUMMARY
+        total_cov=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}')
+        echo "**Total Coverage: $total_cov**" >> $GITHUB_STEP_SUMMARY

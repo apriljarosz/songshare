@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/valkey-io/valkey-go"
@@ -187,6 +188,7 @@ type MultiLevelCache struct {
 	l1Cache    map[string]cacheItem
 	l2Cache    Cache
 	l1MaxItems int
+	mu         sync.RWMutex // Protects l1Cache
 }
 
 type cacheItem struct {
@@ -211,12 +213,22 @@ func NewMultiLevelCache(valkeyURL string, l1MaxItems int) (Cache, error) {
 // Get retrieves from L1 first, then L2
 func (c *MultiLevelCache) Get(ctx context.Context, key string) ([]byte, error) {
 	// Check L1 cache first
+	c.mu.RLock()
 	if item, exists := c.l1Cache[key]; exists {
 		if time.Now().Before(item.expiresAt) {
+			c.mu.RUnlock()
 			return item.data, nil
 		}
-		// Expired, remove from L1
-		delete(c.l1Cache, key)
+		// Expired, need to remove - upgrade to write lock
+		c.mu.RUnlock()
+		c.mu.Lock()
+		// Double-check after acquiring write lock
+		if item, exists := c.l1Cache[key]; exists && !time.Now().Before(item.expiresAt) {
+			delete(c.l1Cache, key)
+		}
+		c.mu.Unlock()
+	} else {
+		c.mu.RUnlock()
 	}
 
 	// Check L2 cache
@@ -253,7 +265,9 @@ func (c *MultiLevelCache) Set(ctx context.Context, key string, value []byte, exp
 // Delete removes from both levels
 func (c *MultiLevelCache) Delete(ctx context.Context, key string) error {
 	// Remove from L1
+	c.mu.Lock()
 	delete(c.l1Cache, key)
+	c.mu.Unlock()
 
 	// Remove from L2
 	return c.l2Cache.Delete(ctx, key)
@@ -262,9 +276,12 @@ func (c *MultiLevelCache) Delete(ctx context.Context, key string) error {
 // Exists checks both levels
 func (c *MultiLevelCache) Exists(ctx context.Context, key string) (bool, error) {
 	// Check L1 first
+	c.mu.RLock()
 	if item, exists := c.l1Cache[key]; exists && time.Now().Before(item.expiresAt) {
+		c.mu.RUnlock()
 		return true, nil
 	}
+	c.mu.RUnlock()
 
 	// Check L2
 	return c.l2Cache.Exists(ctx, key)
@@ -282,6 +299,9 @@ func (c *MultiLevelCache) Health(ctx context.Context) error {
 
 // setL1 sets a value in L1 cache with basic LRU eviction
 func (c *MultiLevelCache) setL1(key string, value []byte, expiration time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	
 	// Simple eviction: if at max capacity, remove oldest
 	if len(c.l1Cache) >= c.l1MaxItems {
 		// Find oldest item to evict (simplified approach)

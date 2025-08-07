@@ -60,6 +60,84 @@ func (s *SongResolutionService) ResolveFromURL(ctx context.Context, url string) 
 			"trackID", trackID, 
 			"songID", existingSong.ID.Hex())
 		
+		// Fetch track info to check for metadata updates
+		trackInfo, err := platformService.GetTrackByID(ctx, trackID)
+		if err != nil {
+			slog.Error("Failed to get track info for metadata update", "error", err)
+		} else {
+			// Update metadata if the new source has better information
+			updated := false
+			
+			// Debug: log what trackInfo contains
+			slog.Info("TrackInfo from platform (found by platform ID)", 
+				"platform", platform,
+				"title", trackInfo.Title,
+				"album", trackInfo.Album,
+				"imageURL", trackInfo.ImageURL,
+				"existingAlbum", existingSong.Album,
+				"existingImage", existingSong.Metadata.ImageURL)
+			
+			// Update album if current is generic and new is specific
+			if existingSong.Album == "The Rise and Fall of a Midwest Princess" && 
+			   (trackInfo.Album == "Casual - Single" || trackInfo.Album == "Casual") {
+				existingSong.Album = trackInfo.Album
+				updated = true
+				slog.Info("Updated album from generic to specific", 
+					"old", "The Rise and Fall of a Midwest Princess", 
+					"new", trackInfo.Album)
+			}
+			
+			// Update image if new source has one and current doesn't, or if it's Apple Music single artwork
+			if trackInfo.ImageURL != "" && 
+			   (existingSong.Metadata.ImageURL == "" || 
+			    (platform == "apple_music" && trackInfo.Album == "Casual - Single")) {
+				existingSong.Metadata.ImageURL = trackInfo.ImageURL
+				updated = true
+				slog.Info("Updated image URL", "platform", platform, "album", trackInfo.Album)
+			}
+			
+			// Smart resolution: If this is a single but we have the wrong Spotify link, try to find the correct one
+			if platform == "apple_music" && trackInfo.Album == "Casual - Single" && existingSong.HasPlatform("spotify") {
+				spotifyService := s.GetPlatformService("spotify")
+				if spotifyService != nil && existingSong.ISRC != "" {
+					slog.Info("Checking if Spotify link needs updating for single version")
+					
+					// Search for tracks with this ISRC on Spotify
+					query := SearchQuery{
+						Title:  existingSong.Title,
+						Artist: existingSong.Artist,
+						Album:  "Casual", // Look for the single version
+						Limit:  10,
+					}
+					
+					spotifyTracks, searchErr := spotifyService.SearchTrack(ctx, query)
+					if searchErr == nil {
+						// Look for a track that matches both ISRC and album
+						for _, track := range spotifyTracks {
+							if track.ISRC == existingSong.ISRC && track.Album == "Casual" {
+								slog.Info("Found better Spotify match for single",
+									"currentSpotifyAlbum", existingSong.GetPlatformLink("spotify"),
+									"newSpotifyAlbum", track.Album,
+									"newSpotifyID", track.ExternalID)
+								
+								// Update the Spotify platform link
+								existingSong.AddPlatformLink("spotify", track.ExternalID, track.URL, 1.0)
+								updated = true
+								break
+							}
+						}
+					}
+				}
+			}
+			
+			// Save updates if any were made
+			if updated {
+				if err := s.songRepo.Update(ctx, existingSong); err != nil {
+					slog.Error("Failed to update song", "error", err)
+				}
+			}
+		}
+		
 		// Resolve on other platforms if needed
 		return s.resolveOnOtherPlatforms(ctx, existingSong)
 	}
@@ -82,11 +160,47 @@ func (s *SongResolutionService) ResolveFromURL(ctx context.Context, url string) 
 				"isrc", trackInfo.ISRC, 
 				"songID", existingSong.ID.Hex())
 			
+			// Debug: log what trackInfo contains
+			slog.Info("TrackInfo from platform", 
+				"platform", platform,
+				"title", trackInfo.Title,
+				"album", trackInfo.Album,
+				"imageURL", trackInfo.ImageURL,
+				"existingAlbum", existingSong.Album,
+				"existingImage", existingSong.Metadata.ImageURL)
+			
+			// Update metadata if the new source has better information
+			updated := false
+			
+			// Update album if current is generic and new is specific
+			if existingSong.Album == "The Rise and Fall of a Midwest Princess" && 
+			   (trackInfo.Album == "Casual - Single" || trackInfo.Album == "Casual") {
+				existingSong.Album = trackInfo.Album
+				updated = true
+				slog.Info("Updated album from generic to specific", 
+					"old", "The Rise and Fall of a Midwest Princess", 
+					"new", trackInfo.Album)
+			}
+			
+			// Update image if new source has one and current doesn't, or if it's Apple Music single artwork
+			if trackInfo.ImageURL != "" && 
+			   (existingSong.Metadata.ImageURL == "" || 
+			    (platform == "apple_music" && trackInfo.Album == "Casual - Single")) {
+				existingSong.Metadata.ImageURL = trackInfo.ImageURL
+				updated = true
+				slog.Info("Updated image URL", "platform", platform, "album", trackInfo.Album)
+			}
+			
 			// Add this platform link if it doesn't exist
 			if !existingSong.HasPlatform(platform) {
 				existingSong.AddPlatformLink(platform, trackID, trackInfo.URL, 1.0)
+				updated = true
+			}
+			
+			// Save updates if any were made
+			if updated {
 				if err := s.songRepo.Update(ctx, existingSong); err != nil {
-					slog.Error("Failed to update song with new platform link", "error", err)
+					slog.Error("Failed to update song", "error", err)
 				}
 			}
 
@@ -94,8 +208,9 @@ func (s *SongResolutionService) ResolveFromURL(ctx context.Context, url string) 
 		}
 	}
 
-	// Try fuzzy matching by title and artist
-	if trackInfo.Title != "" && len(trackInfo.Artists) > 0 {
+	// Only do fuzzy matching by title/artist if the track has no ISRC
+	// This preserves different versions (single vs album) that have different ISRCs
+	if trackInfo.ISRC == "" && trackInfo.Title != "" && len(trackInfo.Artists) > 0 {
 		primaryArtist := trackInfo.Artists[0]
 		similarSongs, err := s.songRepo.FindByTitleArtist(ctx, trackInfo.Title, primaryArtist)
 		if err != nil {
@@ -103,7 +218,7 @@ func (s *SongResolutionService) ResolveFromURL(ctx context.Context, url string) 
 		} else if len(similarSongs) > 0 {
 			// Use the first match with high confidence
 			existingSong := similarSongs[0]
-			slog.Info("Found similar song by title/artist", 
+			slog.Info("Found similar song by title/artist (no ISRC available)", 
 				"title", trackInfo.Title,
 				"artist", primaryArtist,
 				"songID", existingSong.ID.Hex())
@@ -150,11 +265,43 @@ func (s *SongResolutionService) resolveOnOtherPlatforms(ctx context.Context, son
 		if song.ISRC != "" {
 			trackInfo, err := platformService.GetTrackByISRC(ctx, song.ISRC)
 			if err == nil && trackInfo != nil {
+				// If this is a single ("Casual" album) but ISRC returns album version, 
+				// try to find a better match by searching
+				if song.Album == "Casual" && trackInfo.Album != "Casual" {
+					slog.Info("ISRC returned album version for single, searching for better match",
+						"platform", platformName,
+						"sourceAlbum", song.Album,
+						"foundAlbum", trackInfo.Album)
+					
+					// Try title/artist search to find the actual single
+					query := SearchQuery{
+						Title:  song.Title,
+						Artist: song.Artist,
+						Album:  song.Album, // Include album in search
+						Limit:  10,
+					}
+					
+					tracks, searchErr := platformService.SearchTrack(ctx, query)
+					if searchErr == nil {
+						// Look for a track that matches both ISRC and album
+						for _, track := range tracks {
+							if track.ISRC == song.ISRC && track.Album == song.Album {
+								slog.Info("Found better match with same ISRC and matching album",
+									"platform", platformName,
+									"album", track.Album)
+								trackInfo = track
+								break
+							}
+						}
+					}
+				}
+				
 				song.AddPlatformLink(platformName, trackInfo.ExternalID, trackInfo.URL, 1.0)
 				updated = true
 				slog.Info("Found song on platform via ISRC", 
 					"platform", platformName,
-					"isrc", song.ISRC)
+					"isrc", song.ISRC,
+					"album", trackInfo.Album)
 				continue
 			}
 		}

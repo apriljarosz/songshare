@@ -41,6 +41,7 @@ Thumbs.db
 
 # Logs
 *.log
+build-errors.log
 
 # Docker
 .dockerignore
@@ -49,4 +50,4 @@ Thumbs.db
 tmp/
 temp/
 
-keys
+keys/

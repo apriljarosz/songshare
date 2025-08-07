@@ -37,10 +37,13 @@ RUN go build \
     -a \
     -installsuffix cgo \
     -ldflags="-s -w" \
-    -o main .
+    -o main ./cmd/server
 
 # Verify the binary is statically linked
 RUN ldd main || echo "Static binary confirmed"
+
+# Ensure Apple Music private key has correct permissions
+RUN chmod 644 /app/keys/AuthKey_4YLLCTG4M6.p8
 
 # =============================================================================
 # Production Stage: Minimal runtime environment
@@ -53,6 +56,9 @@ COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
 # Copy the binary from builder stage
 COPY --from=builder /app/main /app/main
+
+# Copy Apple Music private key with proper permissions
+COPY --from=builder /app/keys /app/keys
 
 # Use non-root user for security
 USER nonroot:nonroot

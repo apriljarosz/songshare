@@ -341,6 +341,50 @@ func (r *mongoSongRepository) Count(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
+// FindByIDPrefix finds a song by ObjectID prefix (for short ID lookup)
+func (r *mongoSongRepository) FindByIDPrefix(ctx context.Context, prefix string) (*models.Song, error) {
+	// Pad the prefix to create a range query
+	if len(prefix) < 8 {
+		return nil, fmt.Errorf("prefix must be at least 8 characters")
+	}
+	
+	// Take only the first 8 characters for consistency
+	prefix = prefix[:8]
+	
+	// Create ObjectID range for prefix matching
+	startHex := prefix + "0000000000000000" // Pad with zeros to get minimum
+	endHex := prefix + "ffffffffffffffff"   // Pad with 'f' to get maximum
+	
+	startID, err := primitive.ObjectIDFromHex(startHex)
+	if err != nil {
+		return nil, fmt.Errorf("invalid prefix: %w", err)
+	}
+	
+	endID, err := primitive.ObjectIDFromHex(endHex)
+	if err != nil {
+		return nil, fmt.Errorf("invalid prefix: %w", err)
+	}
+	
+	filter := bson.M{
+		"_id": bson.M{
+			"$gte": startID,
+			"$lte": endID,
+		},
+	}
+	
+	var song models.Song
+	err = r.collection.FindOne(ctx, filter).Decode(&song)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to find song by ID prefix: %w", err)
+	}
+	
+	r.handleSchemaEvolution(&song)
+	return &song, nil
+}
+
 // handleSchemaEvolution handles schema migration for older documents
 func (r *mongoSongRepository) handleSchemaEvolution(song *models.Song) {
 	if song.SchemaVersion >= models.CurrentSchemaVersion {

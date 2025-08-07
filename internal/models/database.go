@@ -55,11 +55,17 @@ func (d *Database) Close(ctx context.Context) error {
 func (d *Database) CreateIndexes(ctx context.Context) error {
 	songsCollection := d.DB.Collection("songs")
 
+	// Handle potential index conflicts by dropping conflicting indexes first
+	err := d.handleIndexConflicts(ctx, songsCollection)
+	if err != nil {
+		return err
+	}
+
 	// Create indexes
 	indexes := []mongo.IndexModel{
 		{
 			Keys:    bson.D{{"isrc", 1}},
-			Options: options.Index().SetUnique(true).SetSparse(true),
+			Options: options.Index().SetSparse(true),
 		},
 		{
 			Keys: bson.D{{"title", 1}, {"artist", 1}},
@@ -83,6 +89,38 @@ func (d *Database) CreateIndexes(ctx context.Context) error {
 		},
 	}
 
-	_, err := songsCollection.Indexes().CreateMany(ctx, indexes)
+	_, err = songsCollection.Indexes().CreateMany(ctx, indexes)
 	return err
+}
+
+// handleIndexConflicts checks for and resolves index conflicts
+func (d *Database) handleIndexConflicts(ctx context.Context, collection *mongo.Collection) error {
+	// List existing indexes
+	cursor, err := collection.Indexes().List(ctx)
+	if err != nil {
+		return err
+	}
+	defer cursor.Close(ctx)
+
+	var existingIndexes []bson.M
+	if err = cursor.All(ctx, &existingIndexes); err != nil {
+		return err
+	}
+
+	// Check for conflicting ISRC index (unique vs non-unique)
+	for _, index := range existingIndexes {
+		if indexName, ok := index["name"].(string); ok && indexName == "isrc_1" {
+			// Check if it has unique constraint
+			if unique, exists := index["unique"]; exists && unique == true {
+				// Drop the conflicting unique index
+				_, err := collection.Indexes().DropOne(ctx, "isrc_1")
+				if err != nil {
+					return err
+				}
+				break
+			}
+		}
+	}
+
+	return nil
 }
