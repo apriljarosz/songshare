@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"log/slog"
+	"sort"
 
 	"songshare/internal/handlers/render"
 	"songshare/internal/repositories"
@@ -167,16 +168,16 @@ func (c *Coordinator) GroupResults(results []render.SearchResultWithSource, quer
 		} else {
 			// Create new grouped result
 			grouped := &GroupedSearchResult{
-				ID:             c.generateSearchResultID(result),
-				Title:          result.Title,
-				Artists:        result.Artists,
-				Album:          result.Album,
-				ISRC:           result.ISRC,
-				DurationMs:     result.DurationMs,
-				ReleaseDate:    result.ReleaseDate,
-				ImageURL:       result.ImageURL,
-				Explicit:       result.Explicit,
-				PlatformLinks:  []PlatformResult{{
+				ID:          c.generateSearchResultID(result),
+				Title:       result.Title,
+				Artists:     result.Artists,
+				Album:       result.Album,
+				ISRC:        result.ISRC,
+				DurationMs:  result.DurationMs,
+				ReleaseDate: result.ReleaseDate,
+				ImageURL:    result.ImageURL,
+				Explicit:    result.Explicit,
+				PlatformLinks: []PlatformResult{{
 					Platform:  result.Platform,
 					URL:       result.URL,
 					Available: result.Available,
@@ -201,20 +202,74 @@ func (c *Coordinator) GroupResults(results []render.SearchResultWithSource, quer
 		}
 	}
 
-	// Convert map to slice and sort by relevance/popularity
+	// Convert map to slice
 	var groupedResults []GroupedSearchResult
 	for _, result := range songMap {
 		groupedResults = append(groupedResults, *result)
 	}
 
-	// Sort by popularity (highest first)
-	for i := 0; i < len(groupedResults); i++ {
-		for j := i + 1; j < len(groupedResults); j++ {
-			if groupedResults[j].Popularity > groupedResults[i].Popularity {
-				groupedResults[i], groupedResults[j] = groupedResults[j], groupedResults[i]
-			}
+	// Rank by relevance using scoring.RelevanceScorer with the original flat results as context
+	// Build a flat scoring list for representative items (use first platform link per group)
+	var representative []scoring.SearchResultWithSource
+	for _, grp := range groupedResults {
+		// Choose the first platform link as representative; source "platform" unless we had a local link
+		source := "platform"
+		if grp.HasLocalLink {
+			source = "local"
+		}
+		representative = append(representative, scoring.SearchResultWithSource{
+			SearchResult: scoring.SearchResult{
+				Platform: func() string {
+					if len(grp.PlatformLinks) > 0 {
+						return grp.PlatformLinks[0].Platform
+					}
+					return ""
+				}(),
+				URL: func() string {
+					if len(grp.PlatformLinks) > 0 {
+						return grp.PlatformLinks[0].URL
+					}
+					return ""
+				}(),
+				Title:       grp.Title,
+				Artists:     grp.Artists,
+				Album:       grp.Album,
+				ISRC:        grp.ISRC,
+				DurationMs:  grp.DurationMs,
+				ReleaseDate: grp.ReleaseDate,
+				ImageURL:    grp.ImageURL,
+				Popularity:  grp.Popularity,
+				Explicit:    grp.Explicit,
+				Available:   true,
+			},
+			Source: source,
+		})
+	}
+
+	// Compute relevance scores per group
+	for i := range groupedResults {
+		if i < len(representative) {
+			groupedResults[i].RelevanceScore = c.scorer.CalculateRelevanceScore(
+				representative[i].SearchResult,
+				representative[i].Source,
+				query,
+				i,
+				representative,
+			)
+			groupedResults[i].OriginalIndex = i
 		}
 	}
+
+	// Sort by relevance score desc, tie-break by aggregate popularity desc
+	sort.SliceStable(groupedResults, func(i, j int) bool {
+		if groupedResults[i].RelevanceScore != groupedResults[j].RelevanceScore {
+			return groupedResults[i].RelevanceScore > groupedResults[j].RelevanceScore
+		}
+		if groupedResults[i].Popularity != groupedResults[j].Popularity {
+			return groupedResults[i].Popularity > groupedResults[j].Popularity
+		}
+		return groupedResults[i].OriginalIndex < groupedResults[j].OriginalIndex
+	})
 
 	return groupedResults
 }

@@ -29,8 +29,8 @@ type spotifyService struct {
 
 // Spotify API endpoints
 const (
-	spotifyTokenURL  = "https://accounts.spotify.com/api/token"
-	spotifyAPIURL    = "https://api.spotify.com/v1"
+	spotifyTokenURL = "https://accounts.spotify.com/api/token"
+	spotifyAPIURL   = "https://api.spotify.com/v1"
 )
 
 // Cache TTL constants for API responses
@@ -49,10 +49,10 @@ func NewSpotifyService(clientID, clientSecret string, cache cache.Cache) Platfor
 	}
 
 	client := resty.New().
-		SetTimeout(10*time.Second).
+		SetTimeout(10 * time.Second).
 		SetRetryCount(3).
-		SetRetryWaitTime(1*time.Second).
-		SetRetryMaxWaitTime(5*time.Second)
+		SetRetryWaitTime(1 * time.Second).
+		SetRetryMaxWaitTime(5 * time.Second)
 
 	return &spotifyService{
 		client:       client,
@@ -81,7 +81,7 @@ func (s *spotifyService) ParseURL(url string) (*TrackInfo, error) {
 	}
 
 	trackID := matches[SpotifyURLPattern.TrackIDIndex]
-	
+
 	// Basic track info without API call
 	return &TrackInfo{
 		Platform:   "spotify",
@@ -143,14 +143,14 @@ func (s *spotifyService) GetTrackByID(ctx context.Context, trackID string) (*Tra
 	}
 
 	trackInfo := s.convertSpotifyTrack(&spotifyTrack)
-	
+
 	// Cache the result
 	if data, err := json.Marshal(trackInfo); err == nil {
 		if err := s.cache.Set(ctx, cacheKey, data, spotifyTrackCacheTTL); err != nil {
 			slog.Error("Failed to cache Spotify track", "trackID", trackID, "error", err)
 		}
 	}
-	
+
 	return trackInfo, nil
 }
 
@@ -223,7 +223,7 @@ func (s *spotifyService) SearchTrack(ctx context.Context, query SearchQuery) ([]
 		if query.ISRC != "" {
 			cacheTTL = spotifyISRCCacheTTL
 		}
-		
+
 		if err := s.cache.Set(ctx, cacheKey, data, cacheTTL); err != nil {
 			slog.Error("Failed to cache Spotify search results", "query", searchQuery, "error", err)
 		}
@@ -238,7 +238,7 @@ func (s *spotifyService) GetTrackByISRC(ctx context.Context, isrc string) (*Trac
 		ISRC:  isrc,
 		Limit: 1,
 	}
-	
+
 	tracks, err := s.SearchTrack(ctx, query)
 	if err != nil {
 		return nil, err
@@ -295,9 +295,9 @@ func (s *spotifyService) ensureValidToken(ctx context.Context) error {
 
 	s.accessToken = token.AccessToken
 	s.tokenExpiry = token.Expiry
-	
+
 	slog.Info("Spotify access token refreshed", "expires_at", token.Expiry)
-	
+
 	return nil
 }
 
@@ -367,13 +367,13 @@ func (s *spotifyService) convertSpotifyTrack(track *SpotifyTrack) *TrackInfo {
 
 // Spotify API response structures
 type SpotifyTrack struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Artists     []SpotifyArtist `json:"artists"`
-	Album       SpotifyAlbum    `json:"album"`
-	DurationMs  int             `json:"duration_ms"`
-	Explicit    bool            `json:"explicit"`
-	Popularity  int             `json:"popularity"`
+	ID          string             `json:"id"`
+	Name        string             `json:"name"`
+	Artists     []SpotifyArtist    `json:"artists"`
+	Album       SpotifyAlbum       `json:"album"`
+	DurationMs  int                `json:"duration_ms"`
+	Explicit    bool               `json:"explicit"`
+	Popularity  int                `json:"popularity"`
 	ExternalIDs SpotifyExternalIDs `json:"external_ids"`
 }
 

@@ -212,10 +212,10 @@ const (
 	AppleMusicTrackID1 = "1440857781"
 	AppleMusicTrackID2 = "1440857782"
 
-	SpotifyURL1     = "https://open.spotify.com/track/" + SpotifyTrackID1
-	SpotifyURL2     = "https://open.spotify.com/track/" + SpotifyTrackID2
-	AppleMusicURL1  = "https://music.apple.com/us/song/test-song/" + AppleMusicTrackID1
-	AppleMusicURL2  = "https://music.apple.com/us/album/test-album/123456789?i=" + AppleMusicTrackID2
+	SpotifyURL1    = "https://open.spotify.com/track/" + SpotifyTrackID1
+	SpotifyURL2    = "https://open.spotify.com/track/" + SpotifyTrackID2
+	AppleMusicURL1 = "https://music.apple.com/us/song/test-song/" + AppleMusicTrackID1
+	AppleMusicURL2 = "https://music.apple.com/us/album/test-album/123456789?i=" + AppleMusicTrackID2
 )
 
 // Helper functions for creating test data

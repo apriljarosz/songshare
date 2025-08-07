@@ -1,0 +1,10 @@
+---
+globs: internal/services/*.go
+---
+## Services
+
+- **Role**: Encapsulate orchestration across repositories, external APIs, and search. Keep handlers thin.
+- **Key files**: Orchestration in [platform_service.go](mdc:internal/services/platform_service.go); resolution in [song_resolution_service.go](mdc:internal/services/song_resolution_service.go).
+- **Providers**: Implement platform-specific logic in [apple_music_service.go](mdc:internal/services/apple_music_service.go), [spotify_service.go](mdc:internal/services/spotify_service.go), and [tidal_service.go](mdc:internal/services/tidal_service.go).
+- **Testing**: Use provider-specific integration tests and shared scaffolding in [test_helpers.go](mdc:internal/services/test_helpers.go) and [platform_service_test.go](mdc:internal/services/platform_service_test.go).
+- **Resilience**: Time out and retry external calls judiciously; guard with context. Rate limit where required.

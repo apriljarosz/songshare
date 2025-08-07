@@ -17,18 +17,23 @@ func (c *Coordinator) generateSongKey(result render.SearchResult) string {
 		return "isrc:" + result.ISRC
 	}
 
-	// Secondary: Group by normalized title + artist + album to distinguish different releases
-	// This helps separate different albums, live versions, remixes, etc.
+	// Heuristic grouping when ISRC is missing:
+	// Use normalized title + primary artist + duration bucket to combine platforms
+	// even if album strings differ (single vs album, remaster, etc.). Duration helps
+	// avoid grouping distinct versions (live/remix) that typically differ in length.
 	title := c.normalizeString(result.Title)
 	artist := ""
 	if len(result.Artists) > 0 {
 		artist = c.normalizeString(result.Artists[0])
 	}
-	album := c.normalizeString(result.Album)
 
-	// Include album in key to distinguish between different releases
-	// Example: "Hotel California" on "Hotel California" vs "Hell Freezes Over"
-	return fmt.Sprintf("song:%s:%s:%s", title, artist, album)
+	// Bucket duration to nearest 2 seconds (2000ms). If duration unknown, use "0".
+	durationBucket := 0
+	if result.DurationMs > 0 {
+		durationBucket = (result.DurationMs + 1000) / 2000 // round to nearest bucket
+	}
+
+	return fmt.Sprintf("song:%s:%s:dur%d", title, artist, durationBucket)
 }
 
 // normalizeString normalizes strings for comparison (lowercase, no special chars)
@@ -77,11 +82,11 @@ func (c *Coordinator) generateSearchResultID(result render.SearchResult) string 
 
 	// Fallback to normalized title + artist for songs without ISRC
 	key := c.generateSongKey(result)
-	
+
 	// Create a short hash from the key
 	hash := make([]byte, 4)
 	rand.Read(hash)
 	hashStr := hex.EncodeToString(hash)
-	
+
 	return "result-" + key + "-" + hashStr
 }

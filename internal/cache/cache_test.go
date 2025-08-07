@@ -72,7 +72,7 @@ func TestCacheInterface_Basic(t *testing.T) {
 	// Test missing key
 	_, err = cache.Get(ctx, "missing")
 	assert.Error(t, err)
-	
+
 	var cacheErr *CacheError
 	assert.ErrorAs(t, err, &cacheErr)
 	assert.Equal(t, "get", cacheErr.Operation)
@@ -247,11 +247,11 @@ func TestCacheInterface_ExpirationParameter(t *testing.T) {
 
 	// Test different expiration values (mock doesn't enforce expiration, but should accept them)
 	testCases := []time.Duration{
-		0,                    // No expiration
-		time.Minute,         // 1 minute
-		time.Hour,           // 1 hour
-		24 * time.Hour,      // 1 day
-		-1 * time.Minute,    // Negative duration
+		0,                // No expiration
+		time.Minute,      // 1 minute
+		time.Hour,        // 1 hour
+		24 * time.Hour,   // 1 day
+		-1 * time.Minute, // Negative duration
 	}
 
 	for i, expiration := range testCases {

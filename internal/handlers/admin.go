@@ -29,15 +29,15 @@ func NewAdminHandler(songRepository repositories.SongRepository, mongoClient *mo
 
 // DatabaseStats represents database statistics
 type DatabaseStats struct {
-	DatabaseName    string              `json:"database_name"`
-	TotalSize       float64             `json:"total_size_mb"`
-	StorageSize     float64             `json:"storage_size_mb"`
-	IndexSize       float64             `json:"index_size_mb"`
-	TotalDocuments  int64               `json:"total_documents"`
-	Collections     []CollectionStats   `json:"collections"`
-	RecentActivity  []RecentSong        `json:"recent_activity"`
-	GrowthMetrics   GrowthMetrics       `json:"growth_metrics"`
-	LastUpdated     time.Time           `json:"last_updated"`
+	DatabaseName   string            `json:"database_name"`
+	TotalSize      float64           `json:"total_size_mb"`
+	StorageSize    float64           `json:"storage_size_mb"`
+	IndexSize      float64           `json:"index_size_mb"`
+	TotalDocuments int64             `json:"total_documents"`
+	Collections    []CollectionStats `json:"collections"`
+	RecentActivity []RecentSong      `json:"recent_activity"`
+	GrowthMetrics  GrowthMetrics     `json:"growth_metrics"`
+	LastUpdated    time.Time         `json:"last_updated"`
 }
 
 // CollectionStats represents statistics for a single collection

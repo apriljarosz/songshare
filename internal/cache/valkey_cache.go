@@ -26,7 +26,7 @@ func NewValkeyCache(valkeyURL string) (Cache, error) {
 	clientOption := valkey.ClientOption{
 		InitAddress: []string{addr},
 	}
-	
+
 	// Add authentication if password is provided
 	if password != "" {
 		clientOption.Password = password
@@ -44,7 +44,7 @@ func NewValkeyCache(valkeyURL string) (Cache, error) {
 	// Test connection
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	if err := cache.Health(ctx); err != nil {
 		return nil, fmt.Errorf("failed to connect to Valkey: %w", err)
 	}
@@ -56,7 +56,7 @@ func NewValkeyCache(valkeyURL string) (Cache, error) {
 func (c *valkeyCache) Get(ctx context.Context, key string) ([]byte, error) {
 	cmd := c.client.B().Get().Key(key).Build()
 	result := c.client.Do(ctx, cmd)
-	
+
 	if result.Error() != nil {
 		if valkey.IsValkeyNil(result.Error()) {
 			return nil, nil // Key doesn't exist
@@ -83,7 +83,7 @@ func (c *valkeyCache) Get(ctx context.Context, key string) ([]byte, error) {
 // Set stores a value in Valkey with expiration
 func (c *valkeyCache) Set(ctx context.Context, key string, value []byte, expiration time.Duration) error {
 	var cmd valkey.Completed
-	
+
 	if expiration > 0 {
 		cmd = c.client.B().Set().Key(key).Value(string(value)).Ex(expiration).Build()
 	} else {
@@ -106,7 +106,7 @@ func (c *valkeyCache) Set(ctx context.Context, key string, value []byte, expirat
 func (c *valkeyCache) Delete(ctx context.Context, key string) error {
 	cmd := c.client.B().Del().Key(key).Build()
 	result := c.client.Do(ctx, cmd)
-	
+
 	if result.Error() != nil {
 		return &CacheError{
 			Operation: "delete",
@@ -122,7 +122,7 @@ func (c *valkeyCache) Delete(ctx context.Context, key string) error {
 func (c *valkeyCache) Exists(ctx context.Context, key string) (bool, error) {
 	cmd := c.client.B().Exists().Key(key).Build()
 	result := c.client.Do(ctx, cmd)
-	
+
 	if result.Error() != nil {
 		return false, &CacheError{
 			Operation: "exists",
@@ -153,7 +153,7 @@ func (c *valkeyCache) Close() error {
 func (c *valkeyCache) Health(ctx context.Context) error {
 	cmd := c.client.B().Ping().Build()
 	result := c.client.Do(ctx, cmd)
-	
+
 	if result.Error() != nil {
 		return fmt.Errorf("Valkey health check failed: %w", result.Error())
 	}
@@ -168,18 +168,18 @@ func parseValkeyURL(valkeyURL string) (address, password string, err error) {
 	if err != nil {
 		return "", "", fmt.Errorf("invalid URL format: %w", err)
 	}
-	
+
 	// Extract host:port
 	if u.Host == "" {
 		return "", "", fmt.Errorf("missing host in URL")
 	}
 	address = u.Host
-	
+
 	// Extract password if present
 	if u.User != nil {
 		password, _ = u.User.Password()
 	}
-	
+
 	return address, password, nil
 }
 
@@ -301,20 +301,20 @@ func (c *MultiLevelCache) Health(ctx context.Context) error {
 func (c *MultiLevelCache) setL1(key string, value []byte, expiration time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	
+
 	// Simple eviction: if at max capacity, remove oldest
 	if len(c.l1Cache) >= c.l1MaxItems {
 		// Find oldest item to evict (simplified approach)
 		oldestKey := ""
 		oldestTime := time.Now()
-		
+
 		for k, item := range c.l1Cache {
 			if item.expiresAt.Before(oldestTime) {
 				oldestKey = k
 				oldestTime = item.expiresAt
 			}
 		}
-		
+
 		if oldestKey != "" {
 			delete(c.l1Cache, oldestKey)
 		}

@@ -26,15 +26,15 @@ func NewCachedSongRepository(repository SongRepository, cache cache.Cache) SongR
 }
 
 // Cache key generators
-func songIDKey(id string) string           { return "song:id:" + id }
-func songISRCKey(isrc string) string       { return "song:isrc:" + isrc }
+func songIDKey(id string) string                 { return "song:id:" + id }
+func songISRCKey(isrc string) string             { return "song:isrc:" + isrc }
 func songPlatformKey(platform, id string) string { return "song:platform:" + platform + ":" + id }
-func songSearchKey(query string) string   { return "song:search:" + query }
+func songSearchKey(query string) string          { return "song:search:" + query }
 
 // Cache TTL constants
 const (
 	songCacheTTL     = 1 * time.Hour
-	searchCacheTTL   = 5 * time.Minute  // Extended with smart invalidation
+	searchCacheTTL   = 5 * time.Minute // Extended with smart invalidation
 	negativeCacheTTL = 5 * time.Minute // For null results
 )
 
@@ -47,7 +47,7 @@ func (r *cachedSongRepository) Save(ctx context.Context, song *models.Song) erro
 
 	// Invalidate cache entries
 	r.invalidateSongCache(ctx, song)
-	
+
 	return nil
 }
 
@@ -60,14 +60,14 @@ func (r *cachedSongRepository) Update(ctx context.Context, song *models.Song) er
 
 	// Invalidate cache entries
 	r.invalidateSongCache(ctx, song)
-	
+
 	return nil
 }
 
 // FindByID checks cache first, then repository
 func (r *cachedSongRepository) FindByID(ctx context.Context, id string) (*models.Song, error) {
 	cacheKey := songIDKey(id)
-	
+
 	// Try cache first
 	if cached, err := r.getFromCache(ctx, cacheKey); err == nil && cached != nil {
 		return cached, nil
@@ -81,14 +81,14 @@ func (r *cachedSongRepository) FindByID(ctx context.Context, id string) (*models
 
 	// Cache the result (even if nil)
 	r.cacheResult(ctx, cacheKey, song)
-	
+
 	return song, nil
 }
 
 // FindByISRC checks cache first, then repository
 func (r *cachedSongRepository) FindByISRC(ctx context.Context, isrc string) (*models.Song, error) {
 	cacheKey := songISRCKey(isrc)
-	
+
 	// Try cache first
 	if cached, err := r.getFromCache(ctx, cacheKey); err == nil && cached != nil {
 		return cached, nil
@@ -102,7 +102,7 @@ func (r *cachedSongRepository) FindByISRC(ctx context.Context, isrc string) (*mo
 
 	// Cache the result
 	r.cacheResult(ctx, cacheKey, song)
-	
+
 	return song, nil
 }
 
@@ -114,7 +114,7 @@ func (r *cachedSongRepository) FindByTitleArtist(ctx context.Context, title, art
 // FindByPlatformID checks cache first, then repository
 func (r *cachedSongRepository) FindByPlatformID(ctx context.Context, platform, externalID string) (*models.Song, error) {
 	cacheKey := songPlatformKey(platform, externalID)
-	
+
 	// Try cache first
 	if cached, err := r.getFromCache(ctx, cacheKey); err == nil && cached != nil {
 		return cached, nil
@@ -128,14 +128,14 @@ func (r *cachedSongRepository) FindByPlatformID(ctx context.Context, platform, e
 
 	// Cache the result
 	r.cacheResult(ctx, cacheKey, song)
-	
+
 	return song, nil
 }
 
 // Search caches results for a short duration
 func (r *cachedSongRepository) Search(ctx context.Context, query string, limit int) ([]*models.Song, error) {
 	cacheKey := songSearchKey(fmt.Sprintf("%s:limit:%d", query, limit))
-	
+
 	// Try cache first
 	if cached, err := r.getSearchFromCache(ctx, cacheKey); err == nil && cached != nil {
 		return cached, nil
@@ -149,7 +149,7 @@ func (r *cachedSongRepository) Search(ctx context.Context, query string, limit i
 
 	// Cache the search results
 	r.cacheSearchResult(ctx, cacheKey, songs)
-	
+
 	return songs, nil
 }
 
@@ -210,7 +210,7 @@ func (r *cachedSongRepository) SaveMany(ctx context.Context, songs []*models.Son
 func (r *cachedSongRepository) DeleteByID(ctx context.Context, id string) error {
 	// First get the song to invalidate related cache entries
 	song, _ := r.repository.FindByID(ctx, id)
-	
+
 	err := r.repository.DeleteByID(ctx, id)
 	if err != nil {
 		return err
@@ -234,7 +234,7 @@ func (r *cachedSongRepository) Count(ctx context.Context) (int64, error) {
 // FindByIDPrefix checks cache first, then repository
 func (r *cachedSongRepository) FindByIDPrefix(ctx context.Context, prefix string) (*models.Song, error) {
 	cacheKey := "song:prefix:" + prefix
-	
+
 	// Try cache first
 	if cached, err := r.getFromCache(ctx, cacheKey); err == nil && cached != nil {
 		return cached, nil
@@ -248,7 +248,7 @@ func (r *cachedSongRepository) FindByIDPrefix(ctx context.Context, prefix string
 
 	// Cache the result
 	r.cacheResult(ctx, cacheKey, song)
-	
+
 	return song, nil
 }
 
@@ -339,7 +339,7 @@ func (r *cachedSongRepository) invalidateSongCache(ctx context.Context, song *mo
 	if !song.ID.IsZero() {
 		r.cache.Delete(ctx, songIDKey(song.ID.Hex()))
 	}
-	
+
 	if song.ISRC != "" {
 		r.cache.Delete(ctx, songISRCKey(song.ISRC))
 	}
@@ -355,7 +355,19 @@ func (r *cachedSongRepository) invalidateSongCache(ctx context.Context, song *mo
 
 // InvalidateSearchCache invalidates search cache for a specific query
 func (r *cachedSongRepository) InvalidateSearchCache(query string) {
-	key := songSearchKey(query)
 	ctx := context.Background()
-	r.cache.Delete(ctx, key)
+	
+	// Delete the base query key (for backwards compatibility)
+	baseKey := songSearchKey(query)
+	r.cache.Delete(ctx, baseKey)
+	
+	// Also delete common query variations with different limits
+	// Based on UI options: 10 (default), 25, 50, plus some common API limits
+	commonLimits := []int{10, 25, 50, 100}
+	for _, limit := range commonLimits {
+		key := songSearchKey(fmt.Sprintf("%s:limit:%d", query, limit))
+		r.cache.Delete(ctx, key)
+	}
+	
+	slog.Debug("Invalidated search cache for query with all limit variations", "query", query)
 }

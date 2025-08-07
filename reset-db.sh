@@ -1,24 +1,30 @@
 #!/bin/bash
 
-# Quick script to reset database and cache for testing
-echo "🔄 Stopping services and clearing all data..."
-docker-compose down -v
+# Quick script to reset database and cache for testing (databases only)
+echo "🔄 Stopping database services and clearing all data..."
+docker-compose stop mongodb valkey
+docker-compose rm -f mongodb valkey
 
-echo "🔨 Rebuilding services with fresh containers..."
-docker-compose up --build -d
+echo "🗑️ Removing database volumes..."
+docker volume rm songshare_mongo-data songshare_mongo-config songshare_valkey-data 2>/dev/null || true
 
-echo "⏳ Waiting for services to be healthy..."
-sleep 15
+echo "🔨 Starting fresh database services..."
+docker-compose up -d mongodb valkey
+
+echo "⏳ Waiting for database services to be healthy..."
+echo "Waiting for MongoDB..."
+until docker-compose exec mongodb mongosh --eval "db.adminCommand('ping')" >/dev/null 2>&1; do
+    echo -n "."
+    sleep 2
+done
+echo " MongoDB ready!"
+
+echo "Waiting for Valkey..."
+until docker-compose exec valkey valkey-cli ping >/dev/null 2>&1; do
+    echo -n "."
+    sleep 2
+done
+echo " Valkey ready!"
 
 echo "✅ Database and cache reset complete!"
-echo "🌐 Search page: http://localhost:8080/search"
-echo ""
-echo "Testing Apple Music authentication..."
-sleep 3
-
-# Test if Apple Music is working
-if curl -s "http://localhost:8080/api/v1/search/results?q=test" | grep -q "music.apple.com"; then
-    echo "✅ Apple Music: Working"
-else 
-    echo "❌ Apple Music: Authentication issue detected"
-fi
+echo "💡 Note: Go application (if running with 'air') will automatically reconnect to the fresh databases"

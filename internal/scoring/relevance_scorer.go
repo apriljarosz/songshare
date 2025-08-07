@@ -42,7 +42,7 @@ func NewRelevanceScorer() *RelevanceScorer {
 func (rs *RelevanceScorer) CalculateRelevanceScore(result SearchResult, source string, query string, index int, allResults []SearchResultWithSource) float64 {
 	// NEW BALANCED SCORING SYSTEM (0-100 scale)
 	// - Text Match Quality: 0-60 points (Primary factor)
-	// - Popularity Boost: 0-25 points (Secondary factor, logarithmic)
+	// - Popularity Boost: 0-35 points (Secondary factor, logarithmic)
 	// - Context & Quality: 0-15 points (Tie-breakers)
 
 	score := 0.0
@@ -100,7 +100,7 @@ func (rs *RelevanceScorer) calculateTextMatchScore(result SearchResult, query st
 	return score
 }
 
-// calculatePopularityBoost calculates logarithmic popularity scaling (0-25 points)
+// calculatePopularityBoost calculates logarithmic popularity scaling (0-35 points)
 func (rs *RelevanceScorer) calculatePopularityBoost(popularity int) float64 {
 	if popularity <= 0 {
 		return 0.0
@@ -110,15 +110,15 @@ func (rs *RelevanceScorer) calculatePopularityBoost(popularity int) float64 {
 	// This compresses the range so 95 popularity doesn't get 5x more points than 20 popularity
 	switch {
 	case popularity >= 85:
-		return 25.0 // Mega hits (Taylor Swift, etc.)
+		return 35.0 // Mega hits
 	case popularity >= 70:
-		return 20.0 // Very popular (mainstream radio)
+		return 28.0 // Very popular
 	case popularity >= 50:
-		return 15.0 // Popular (well-known)
+		return 20.0 // Popular
 	case popularity >= 30:
-		return 10.0 // Moderate (indie hits)
+		return 12.0 // Moderate
 	case popularity >= 10:
-		return 5.0 // Niche (cult following)
+		return 6.0 // Niche
 	default:
 		return 0.0 // Unknown/new
 	}

@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 
-	"github.com/gin-gonic/gin"
 	"songshare/internal/models"
 	"songshare/internal/templates"
+
+	"github.com/gin-gonic/gin"
 )
 
 // SongMetadata represents core song information for responses
@@ -63,7 +65,6 @@ type SearchResult struct {
 	Explicit    bool     `json:"explicit,omitempty"`
 	Available   bool     `json:"available"`
 }
-
 
 // SongRenderer handles rendering song responses in different formats
 type SongRenderer struct {
@@ -126,7 +127,7 @@ type PlatformUIConfig struct {
 	BadgeClass  string
 }
 
-// RenderSongPage renders a song as HTML page  
+// RenderSongPage renders a song as HTML page
 func (r *SongRenderer) RenderSongPage(c *gin.Context, song *models.Song, getPlatformUIConfig func(string) *PlatformUIConfig) {
 	// Create template data
 	data := struct {
@@ -161,6 +162,30 @@ func (r *SongRenderer) RenderSongPage(c *gin.Context, song *models.Song, getPlat
 		}
 	}
 
+	// Ensure deterministic platform order for display: Apple Music, Spotify, TIDAL, then others
+	platformPriority := func(platform string) int {
+		switch platform {
+		case "apple_music":
+			return 0
+		case "spotify":
+			return 1
+		case "tidal":
+			return 2
+		default:
+			return 100
+		}
+	}
+
+	sort.SliceStable(data.Platforms, func(i, j int) bool {
+		pi := platformPriority(data.Platforms[i].Platform)
+		pj := platformPriority(data.Platforms[j].Platform)
+		if pi != pj {
+			return pi < pj
+		}
+		// Fallback: sort by name to keep stable across runs
+		return data.Platforms[i].Name < data.Platforms[j].Name
+	})
+
 	tmpl, err := templates.GetTemplate("song_page")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Template error"})
@@ -192,4 +217,3 @@ func (r *SongRenderer) RenderSearchPage(c *gin.Context, query string) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Render error"})
 	}
 }
-

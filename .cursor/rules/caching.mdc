@@ -1,0 +1,8 @@
+---
+globs: internal/cache/**,internal/search/cache/**
+---
+## Caching
+
+- **Shared cache layer**: Interfaces and implementations live in [internal/cache](mdc:internal/cache/), including Valkey in [valkey_cache.go](mdc:internal/cache/valkey_cache.go).
+- **Search cache**: Specialized cache components under [internal/search/cache](mdc:internal/search/cache/).
+- **Guidelines**: Choose keys that encode input parameters; prefer explicit TTLs. Invalidate or update caches on writes via repository wrappers.

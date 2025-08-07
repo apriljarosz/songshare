@@ -88,7 +88,7 @@ func main() {
 		break
 	}
 
-	slog.Info("Album art backfill completed", 
+	slog.Info("Album art backfill completed",
 		"processed", processed,
 		"updated", updated)
 
@@ -128,9 +128,9 @@ func backfillSongAlbumArt(ctx context.Context, song *models.Song, spotifyService
 		// Fetch track info from the platform
 		trackInfo, err := platformService.GetTrackByID(ctx, link.ExternalID)
 		if err != nil {
-			slog.Warn("Failed to fetch track info for backfill", 
-				"platform", link.Platform, 
-				"trackID", link.ExternalID, 
+			slog.Warn("Failed to fetch track info for backfill",
+				"platform", link.Platform,
+				"trackID", link.ExternalID,
 				"error", err)
 			continue
 		}
@@ -138,22 +138,22 @@ func backfillSongAlbumArt(ctx context.Context, song *models.Song, spotifyService
 		// If we got an image URL, update the song
 		if trackInfo != nil && trackInfo.ImageURL != "" {
 			song.Metadata.ImageURL = trackInfo.ImageURL
-			
+
 			// Update the song in the database
 			if err := songRepo.Update(ctx, song); err != nil {
-				slog.Error("Failed to update song with album art", 
-					"songID", song.ID.Hex(), 
+				slog.Error("Failed to update song with album art",
+					"songID", song.ID.Hex(),
 					"error", err)
 				return false
 			}
 
-			slog.Info("Successfully backfilled album art", 
-				"songID", song.ID.Hex(), 
+			slog.Info("Successfully backfilled album art",
+				"songID", song.ID.Hex(),
 				"title", song.Title,
 				"artist", song.Artist,
 				"platform", link.Platform,
 				"imageURL", trackInfo.ImageURL)
-			
+
 			return true
 		}
 	}

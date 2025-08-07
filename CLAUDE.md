@@ -209,3 +209,6 @@ The `/s/:id` endpoint provides dual JSON/HTML responses based on Accept headers.
 - Distroless container image for minimal attack surface
 - Environment variable validation on startup
 - Security scanning configured in CI/CD pipeline
+
+## Development Memories
+- The go server is running in Air, which auto hot-reloads, so you don't need to restart anything

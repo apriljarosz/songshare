@@ -18,7 +18,21 @@
       "Bash(ls:*)",
       "Bash(grep:*)",
       "Bash(mv:*)",
-      "Bash(sed:*)"
+      "Bash(sed:*)",
+      "Bash(awk:*)",
+      "mcp__slop__getApiOverview",
+      "WebFetch(domain:tidal-music.github.io)",
+      "WebFetch(domain:developer.tidal.com)",
+      "mcp__playwright__browser_navigate",
+      "mcp__playwright__browser_type",
+      "mcp__playwright__browser_snapshot",
+      "mcp__playwright__browser_evaluate",
+      "Bash(go install:*)",
+      "WebFetch(domain:openapi.tidal.com)",
+      "WebFetch(domain:upload.wikimedia.org)",
+      "mcp__gopls__go_symbol_references",
+      "mcp__gopls__go_package_api",
+      "mcp__gopls__go_diagnostics"
     ],
     "deny": []
   }

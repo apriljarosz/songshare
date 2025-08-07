@@ -46,10 +46,10 @@ const (
 // NewAppleMusicService creates a new Apple Music service
 func NewAppleMusicService(keyID, teamID, keyFile string, cache cache.Cache) PlatformService {
 	client := resty.New().
-		SetTimeout(10*time.Second).
+		SetTimeout(10 * time.Second).
 		SetRetryCount(3).
-		SetRetryWaitTime(1*time.Second).
-		SetRetryMaxWaitTime(5*time.Second)
+		SetRetryWaitTime(1 * time.Second).
+		SetRetryMaxWaitTime(5 * time.Second)
 
 	service := &appleMusicService{
 		client:  client,
@@ -85,7 +85,7 @@ func (s *appleMusicService) ParseURL(url string) (*TrackInfo, error) {
 	}
 
 	trackID := matches[AppleMusicURLPattern.TrackIDIndex]
-	
+
 	return &TrackInfo{
 		Platform:   "apple_music",
 		ExternalID: trackID,
@@ -154,14 +154,14 @@ func (s *appleMusicService) GetTrackByID(ctx context.Context, trackID string) (*
 	}
 
 	trackInfo := s.convertAppleMusicTrack(&appleMusicTrack.Data[0])
-	
+
 	// Cache the result
 	if data, err := json.Marshal(trackInfo); err == nil {
 		if err := s.cache.Set(ctx, cacheKey, data, appleMusicTrackCacheTTL); err != nil {
 			slog.Error("Failed to cache Apple Music track", "trackID", trackID, "error", err)
 		}
 	}
-	
+
 	return trackInfo, nil
 }
 
@@ -234,7 +234,7 @@ func (s *appleMusicService) SearchTrack(ctx context.Context, query SearchQuery) 
 		if query.ISRC != "" {
 			cacheTTL = appleMusicISRCCacheTTL
 		}
-		
+
 		if err := s.cache.Set(ctx, cacheKey, data, cacheTTL); err != nil {
 			slog.Error("Failed to cache Apple Music search results", "query", searchQuery, "error", err)
 		}
@@ -455,20 +455,20 @@ type AppleMusicSongs struct {
 }
 
 type AppleMusicSong struct {
-	ID         string                    `json:"id"`
-	Type       string                    `json:"type"`
+	ID         string                   `json:"id"`
+	Type       string                   `json:"type"`
 	Attributes AppleMusicSongAttributes `json:"attributes"`
 }
 
 type AppleMusicSongAttributes struct {
-	Name              string            `json:"name"`
-	ArtistName        string            `json:"artistName"`
-	AlbumName         string            `json:"albumName"`
-	ISRC              string            `json:"isrc"`
-	DurationInMillis  int               `json:"durationInMillis"`
-	ReleaseDate       string            `json:"releaseDate"`
-	ContentRating     string            `json:"contentRating,omitempty"`
-	Artwork           AppleMusicArtwork `json:"artwork"`
+	Name             string            `json:"name"`
+	ArtistName       string            `json:"artistName"`
+	AlbumName        string            `json:"albumName"`
+	ISRC             string            `json:"isrc"`
+	DurationInMillis int               `json:"durationInMillis"`
+	ReleaseDate      string            `json:"releaseDate"`
+	ContentRating    string            `json:"contentRating,omitempty"`
+	Artwork          AppleMusicArtwork `json:"artwork"`
 }
 
 type AppleMusicArtwork struct {

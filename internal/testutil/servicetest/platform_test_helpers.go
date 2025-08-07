@@ -15,13 +15,13 @@ import (
 type PlatformServiceTestSuite struct {
 	Service      PlatformService
 	PlatformName string
-	TestTrackID  string          // A known track ID for testing
-	TestURL      string          // A known URL for testing
-	TestISRC     string          // A known ISRC for testing
-	TestQueries  []TestQuery     // Test search queries
-	URLPatterns  []URLTestCase   // URL pattern test cases
-	SkipISRC     bool            // Skip ISRC tests if platform doesn't support it
-	SkipSearch   bool            // Skip search tests if not implemented
+	TestTrackID  string        // A known track ID for testing
+	TestURL      string        // A known URL for testing
+	TestISRC     string        // A known ISRC for testing
+	TestQueries  []TestQuery   // Test search queries
+	URLPatterns  []URLTestCase // URL pattern test cases
+	SkipISRC     bool          // Skip ISRC tests if platform doesn't support it
+	SkipSearch   bool          // Skip search tests if not implemented
 }
 
 // TestQuery represents a test search query
@@ -53,19 +53,19 @@ func (suite *PlatformServiceTestSuite) RunFullTestSuite(t *testing.T) {
 	t.Run("Health", suite.TestHealth)
 	t.Run("ParseURL", suite.TestParseURL)
 	t.Run("BuildURL", suite.TestBuildURL)
-	
+
 	if suite.TestTrackID != "" {
 		t.Run("GetTrackByID", suite.TestGetTrackByID)
 	}
-	
+
 	if !suite.SkipISRC && suite.TestISRC != "" {
 		t.Run("GetTrackByISRC", suite.TestGetTrackByISRC)
 	}
-	
+
 	if !suite.SkipSearch && len(suite.TestQueries) > 0 {
 		t.Run("SearchTrack", suite.TestSearchTrack)
 	}
-	
+
 	t.Run("ErrorHandling", suite.TestErrorHandling)
 	t.Run("Caching", suite.TestCaching)
 }
@@ -81,7 +81,7 @@ func (suite *PlatformServiceTestSuite) TestGetPlatformName(t *testing.T) {
 func (suite *PlatformServiceTestSuite) TestHealth(t *testing.T) {
 	ctx := context.Background()
 	err := suite.Service.Health(ctx)
-	
+
 	// Health should either pass or fail with a descriptive error
 	if err != nil {
 		t.Logf("Health check failed (this may be expected if no credentials are provided): %v", err)
@@ -97,11 +97,11 @@ func (suite *PlatformServiceTestSuite) TestParseURL(t *testing.T) {
 	if len(suite.URLPatterns) == 0 {
 		t.Skip("No URL patterns provided for testing")
 	}
-	
+
 	for _, testCase := range suite.URLPatterns {
 		t.Run(testCase.Name, func(t *testing.T) {
 			trackInfo, err := suite.Service.ParseURL(testCase.URL)
-			
+
 			if testCase.ShouldMatch {
 				require.NoError(t, err)
 				assert.Equal(t, suite.PlatformName, trackInfo.Platform)
@@ -122,7 +122,7 @@ func (suite *PlatformServiceTestSuite) TestBuildURL(t *testing.T) {
 	if suite.TestTrackID == "" {
 		t.Skip("No test track ID provided")
 	}
-	
+
 	url := suite.Service.BuildURL(suite.TestTrackID)
 	assert.NotEmpty(t, url)
 	assert.Contains(t, url, suite.TestTrackID)
@@ -134,10 +134,10 @@ func (suite *PlatformServiceTestSuite) TestGetTrackByID(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping API test in short mode")
 	}
-	
+
 	ctx := context.Background()
 	trackInfo, err := suite.Service.GetTrackByID(ctx, suite.TestTrackID)
-	
+
 	if err != nil {
 		t.Logf("GetTrackByID failed (may be expected without credentials): %v", err)
 		// Verify error structure
@@ -146,7 +146,7 @@ func (suite *PlatformServiceTestSuite) TestGetTrackByID(t *testing.T) {
 		assert.Equal(t, suite.PlatformName, platformError.Platform)
 		return
 	}
-	
+
 	// If successful, verify track info
 	require.NotNil(t, trackInfo)
 	assert.Equal(t, suite.PlatformName, trackInfo.Platform)
@@ -162,17 +162,17 @@ func (suite *PlatformServiceTestSuite) TestGetTrackByISRC(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping API test in short mode")
 	}
-	
+
 	ctx := context.Background()
 	trackInfo, err := suite.Service.GetTrackByISRC(ctx, suite.TestISRC)
-	
+
 	if err != nil {
 		t.Logf("GetTrackByISRC failed (may be expected without credentials): %v", err)
 		var platformError *PlatformError
 		assert.ErrorAs(t, err, &platformError)
 		return
 	}
-	
+
 	require.NotNil(t, trackInfo)
 	assert.Equal(t, suite.PlatformName, trackInfo.Platform)
 	assert.Equal(t, suite.TestISRC, trackInfo.ISRC)
@@ -185,23 +185,23 @@ func (suite *PlatformServiceTestSuite) TestSearchTrack(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping API test in short mode")
 	}
-	
+
 	ctx := context.Background()
-	
+
 	for _, testQuery := range suite.TestQueries {
 		t.Run(testQuery.Name, func(t *testing.T) {
 			tracks, err := suite.Service.SearchTrack(ctx, testQuery.Query)
-			
+
 			if err != nil {
 				t.Logf("Search failed (may be expected without credentials): %v", err)
 				var platformError *PlatformError
 				assert.ErrorAs(t, err, &platformError)
 				return
 			}
-			
+
 			if testQuery.Expected.ShouldFind {
 				assert.GreaterOrEqual(t, len(tracks), testQuery.Expected.MinResults)
-				
+
 				if len(tracks) > 0 {
 					firstTrack := tracks[0]
 					assert.Equal(t, suite.PlatformName, firstTrack.Platform)
@@ -209,7 +209,7 @@ func (suite *PlatformServiceTestSuite) TestSearchTrack(t *testing.T) {
 					assert.NotEmpty(t, firstTrack.URL)
 					assert.NotEmpty(t, firstTrack.Title)
 					assert.NotEmpty(t, firstTrack.Artists)
-					
+
 					// Check expected content if provided
 					if testQuery.Expected.TrackTitle != "" {
 						found := false
@@ -221,7 +221,7 @@ func (suite *PlatformServiceTestSuite) TestSearchTrack(t *testing.T) {
 						}
 						assert.True(t, found, "Expected to find track with title containing: %s", testQuery.Expected.TrackTitle)
 					}
-					
+
 					if testQuery.Expected.TrackArtist != "" {
 						found := false
 						for _, track := range tracks {
@@ -248,7 +248,7 @@ func (suite *PlatformServiceTestSuite) TestSearchTrack(t *testing.T) {
 // TestErrorHandling tests various error conditions
 func (suite *PlatformServiceTestSuite) TestErrorHandling(t *testing.T) {
 	ctx := context.Background()
-	
+
 	t.Run("InvalidTrackID", func(t *testing.T) {
 		_, err := suite.Service.GetTrackByID(ctx, "invalid_track_id_12345")
 		if err != nil {
@@ -257,27 +257,27 @@ func (suite *PlatformServiceTestSuite) TestErrorHandling(t *testing.T) {
 			assert.Equal(t, suite.PlatformName, platformError.Platform)
 		}
 	})
-	
+
 	t.Run("InvalidISRC", func(t *testing.T) {
 		if suite.SkipISRC {
 			t.Skip("ISRC not supported by this platform")
 		}
-		
+
 		_, err := suite.Service.GetTrackByISRC(ctx, "INVALID_ISRC")
 		if err != nil {
 			var platformError *PlatformError
 			assert.ErrorAs(t, err, &platformError)
 		}
 	})
-	
+
 	t.Run("EmptySearch", func(t *testing.T) {
 		if suite.SkipSearch {
 			t.Skip("Search not supported by this platform")
 		}
-		
+
 		query := SearchQuery{Limit: 5}
 		tracks, err := suite.Service.SearchTrack(ctx, query)
-		
+
 		// Should either return results or an error, never panic
 		if err != nil {
 			var platformError *PlatformError
@@ -294,22 +294,22 @@ func (suite *PlatformServiceTestSuite) TestCaching(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping caching test in short mode")
 	}
-	
+
 	if suite.TestTrackID == "" {
 		t.Skip("No test track ID provided for caching test")
 	}
-	
+
 	ctx := context.Background()
-	
+
 	// First call (should hit API)
 	track1, err1 := suite.Service.GetTrackByID(ctx, suite.TestTrackID)
-	
+
 	// Second call (should hit cache if implemented)
 	track2, err2 := suite.Service.GetTrackByID(ctx, suite.TestTrackID)
-	
+
 	// Both calls should have same result
 	assert.Equal(t, err1 != nil, err2 != nil, "Both calls should have same error status")
-	
+
 	if err1 == nil && err2 == nil {
 		assert.Equal(t, track1.Title, track2.Title)
 		assert.Equal(t, track1.ExternalID, track2.ExternalID)
@@ -330,12 +330,12 @@ func (suite *MockPlatformServiceTestSuite) RunMockTestSuite(t *testing.T) {
 		assert.Equal(t, suite.PlatformName, name)
 		assert.NotEmpty(t, name)
 	})
-	
+
 	t.Run("ParseURL", func(t *testing.T) {
 		for _, testCase := range suite.URLPatterns {
 			t.Run(testCase.Name, func(t *testing.T) {
 				trackInfo, err := suite.Service.ParseURL(testCase.URL)
-				
+
 				if testCase.ShouldMatch {
 					require.NoError(t, err)
 					assert.Equal(t, suite.PlatformName, trackInfo.Platform)
@@ -346,7 +346,7 @@ func (suite *MockPlatformServiceTestSuite) RunMockTestSuite(t *testing.T) {
 			})
 		}
 	})
-	
+
 	t.Run("BuildURL", func(t *testing.T) {
 		testID := "test123"
 		url := suite.Service.BuildURL(testID)
@@ -365,11 +365,11 @@ func contains(haystack, needle string) bool {
 	if len(haystack) == 0 {
 		return false
 	}
-	
+
 	// Convert to lowercase for case-insensitive comparison
 	haystackLower := strings.ToLower(haystack)
 	needleLower := strings.ToLower(needle)
-	
+
 	return strings.Contains(haystackLower, needleLower)
 }
 
@@ -512,7 +512,7 @@ func (suite *PlatformServiceBenchmarkSuite) RunBenchmarks(b *testing.B) {
 			}
 		})
 	}
-	
+
 	if suite.TestTrackID != "" {
 		b.Run("BuildURL", func(b *testing.B) {
 			b.ResetTimer()
@@ -520,12 +520,12 @@ func (suite *PlatformServiceBenchmarkSuite) RunBenchmarks(b *testing.B) {
 				_ = suite.Service.BuildURL(suite.TestTrackID)
 			}
 		})
-		
+
 		b.Run("GetTrackByID", func(b *testing.B) {
 			if testing.Short() {
 				b.Skip("Skipping API benchmark in short mode")
 			}
-			
+
 			ctx := context.Background()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -533,12 +533,12 @@ func (suite *PlatformServiceBenchmarkSuite) RunBenchmarks(b *testing.B) {
 			}
 		})
 	}
-	
+
 	b.Run("SearchTrack", func(b *testing.B) {
 		if testing.Short() {
 			b.Skip("Skipping API benchmark in short mode")
 		}
-		
+
 		ctx := context.Background()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {

@@ -107,8 +107,8 @@ func joinArtists(artists []string) string {
 type URLPattern struct {
 	Regex        *regexp.Regexp
 	Platform     string
-	TrackIDIndex int    // Index of the track ID capture group
-	Description  string // Human-readable description of the pattern
+	TrackIDIndex int      // Index of the track ID capture group
+	Description  string   // Human-readable description of the pattern
 	Examples     []string // Example URLs this pattern should match
 }
 
@@ -122,23 +122,43 @@ type URLPatternRegistry struct {
 var patternRegistry = &URLPatternRegistry{
 	patterns: []URLPattern{
 		{
+			Regex:        regexp.MustCompile(`(?:https?://)?music\.apple\.com/[a-z]{2}/(?:album|song)/(?:[^/]+/)?(\d+)`),
+			Platform:     "apple_music",
+			TrackIDIndex: 1,
+			Description:  "Apple Music track URLs",
+			Examples: []string{
+				"https://music.apple.com/us/album/bohemian-rhapsody/1440806041?i=1440806053",
+				"music.apple.com/us/song/1440806053",
+			},
+		},
+		{
 			Regex:        regexp.MustCompile(`(?:https?://)?(?:open\.)?spotify\.com/track/([a-zA-Z0-9]+)`),
 			Platform:     "spotify",
 			TrackIDIndex: 1,
 			Description:  "Spotify track URLs",
-			Examples:     []string{
+			Examples: []string{
 				"https://open.spotify.com/track/4iV5W9uYEdYUVa79Axb7Rh",
 				"spotify.com/track/4iV5W9uYEdYUVa79Axb7Rh",
 			},
 		},
 		{
-			Regex:        regexp.MustCompile(`(?:https?://)?music\.apple\.com/[a-z]{2}/(?:album|song)/(?:[^/]+/)?(\d+)`),
-			Platform:     "apple_music",
+			Regex:        regexp.MustCompile(`(?:https?://)?(?:www\.)?(?:listen\.)?tidal\.com/(?:browse/)?track/(\d+)`),
+			Platform:     "tidal",
 			TrackIDIndex: 1,
-			Description:  "Apple Music track URLs",
-			Examples:     []string{
-				"https://music.apple.com/us/album/bohemian-rhapsody/1440806041?i=1440806053",
-				"music.apple.com/us/song/1440806053",
+			Description:  "Tidal track URLs",
+			Examples: []string{
+				"https://tidal.com/browse/track/77646168",
+				"https://tidal.com/track/77646168",
+				"https://listen.tidal.com/track/77646168",
+			},
+		},
+		{
+			Regex:        regexp.MustCompile(`(?:https?://)?(?:www\.)?(?:listen\.)?tidal\.com/.*[?&]trackId=(\d+)`),
+			Platform:     "tidal",
+			TrackIDIndex: 1,
+			Description:  "Tidal album URLs with track ID parameter",
+			Examples: []string{
+				"https://tidal.com/browse/album/77646164?play=true&trackId=77646168",
 			},
 		},
 	},

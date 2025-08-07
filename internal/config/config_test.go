@@ -19,8 +19,8 @@ func TestLoad(t *testing.T) {
 
 	cfg, err := Load()
 	require.NoError(t, err)
-	
-	assert.Equal(t, "8080", cfg.Port) // default value
+
+	assert.Equal(t, "8080", cfg.Port)     // default value
 	assert.Equal(t, "debug", cfg.GinMode) // default value
 	assert.Equal(t, "mongodb://test:test@localhost:27017/test", cfg.MongodbURL)
 	assert.Equal(t, "valkey://localhost:6379", cfg.ValkeyURL)
@@ -457,7 +457,7 @@ func TestConfigFromEnvironment(t *testing.T) {
 			defer tt.cleanupEnv()
 
 			config, err := ConfigFromEnvironment(tt.platformName)
-			
+
 			if !tt.expectConfig {
 				assert.NoError(t, err)
 				assert.Nil(t, config)
@@ -476,10 +476,10 @@ func TestLoad_MissingRequiredEnv(t *testing.T) {
 	// Ensure no required env vars are set
 	originalMongoDB := os.Getenv("MONGODB_URL")
 	originalValkey := os.Getenv("VALKEY_URL")
-	
+
 	os.Unsetenv("MONGODB_URL")
 	os.Unsetenv("VALKEY_URL")
-	
+
 	defer func() {
 		if originalMongoDB != "" {
 			os.Setenv("MONGODB_URL", originalMongoDB)

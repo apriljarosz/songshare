@@ -1,0 +1,10 @@
+---
+globs: internal/repositories/*.go
+---
+## Repositories
+
+- **Contract first**: Define or extend interfaces in [song_repository.go](mdc:internal/repositories/song_repository.go). Keep interfaces small and focused on domain operations.
+- **Implementations**: Persistence in [mongo_song_repository.go](mdc:internal/repositories/mongo_song_repository.go). Add new backends by implementing the same interface.
+- **Caching**: Wrap with [cached_song_repository.go](mdc:internal/repositories/cached_song_repository.go) when read-heavy. Keep cache invalidation consistent with write paths.
+- **Context**: All methods accept `context.Context`. Do not perform blocking I/O without context awareness.
+- **Errors**: Convert driver-specific errors into domain errors at the repository boundary.

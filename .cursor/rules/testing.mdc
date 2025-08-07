@@ -1,0 +1,10 @@
+---
+globs: *_test.go
+---
+## Testing guidelines
+
+- **Placement**: Unit tests live next to their subjects. Integration tests live under [test/integration](mdc:test/integration/).
+- **Utilities**: Prefer helpers in [internal/testutil](mdc:internal/testutil/) and [internal/testutil/servicetest](mdc:internal/testutil/servicetest/). HTTP helpers in [internal/testutil/http.go](mdc:internal/testutil/http.go). Fixtures in [internal/testutil/fixtures.go](mdc:internal/testutil/fixtures.go).
+- **Service tests**: Use scaffolding in [platform_test_helpers.go](mdc:internal/testutil/servicetest/platform_test_helpers.go) and interfaces in [interfaces.go](mdc:internal/testutil/servicetest/interfaces.go).
+- **External providers**: Integration tests exist for Spotify and Apple Music, e.g., [spotify_service_integration_test.go](mdc:internal/services/spotify_service_integration_test.go) and [apple_music_service_integration_test.go](mdc:internal/services/apple_music_service_integration_test.go). Ensure credentials are configured via [internal/config](mdc:internal/config/).
+- **Determinism**: Mock external calls via interfaces and in-memory stores. Prefer hermetic tests by default; tag or separate networked tests.

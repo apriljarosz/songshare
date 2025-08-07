@@ -22,29 +22,29 @@ type PlatformConfig struct {
 	Name       string     `json:"name"`
 	Enabled    bool       `json:"enabled"`
 	AuthMethod AuthMethod `json:"auth_method"`
-	
+
 	// OAuth2 credentials (Spotify-style)
 	ClientID     string `json:"client_id,omitempty"`
 	ClientSecret string `json:"client_secret,omitempty"`
 	TokenURL     string `json:"token_url,omitempty"`
-	
+
 	// JWT credentials (Apple Music-style)
-	KeyID    string `json:"key_id,omitempty"`
-	TeamID   string `json:"team_id,omitempty"`
-	KeyFile  string `json:"key_file,omitempty"`
-	
+	KeyID   string `json:"key_id,omitempty"`
+	TeamID  string `json:"team_id,omitempty"`
+	KeyFile string `json:"key_file,omitempty"`
+
 	// API Key credentials (simple)
 	APIKey    string `json:"api_key,omitempty"`
 	APISecret string `json:"api_secret,omitempty"`
-	
+
 	// Basic Auth credentials
 	Username string `json:"username,omitempty"`
 	Password string `json:"password,omitempty"`
-	
+
 	// Additional configuration
 	BaseURL     string            `json:"base_url,omitempty"`
-	RateLimit   int               `json:"rate_limit,omitempty"`  // requests per minute
-	Timeout     int               `json:"timeout,omitempty"`     // seconds
+	RateLimit   int               `json:"rate_limit,omitempty"` // requests per minute
+	Timeout     int               `json:"timeout,omitempty"`    // seconds
 	ExtraConfig map[string]string `json:"extra_config,omitempty"`
 }
 
@@ -56,14 +56,19 @@ type Config struct {
 	BaseURL    string `envconfig:"BASE_URL" default:"http://localhost:8080"`
 	MongodbURL string `envconfig:"MONGODB_URL" required:"true"`
 	ValkeyURL  string `envconfig:"VALKEY_URL" required:"true"`
-	
+
 	// Legacy platform credentials (for backward compatibility)
 	SpotifyClientID     string `envconfig:"SPOTIFY_CLIENT_ID"`
 	SpotifyClientSecret string `envconfig:"SPOTIFY_CLIENT_SECRET"`
 	AppleMusicKeyID     string `envconfig:"APPLE_MUSIC_KEY_ID"`
 	AppleMusicTeamID    string `envconfig:"APPLE_MUSIC_TEAM_ID"`
 	AppleMusicKeyFile   string `envconfig:"APPLE_MUSIC_KEY_FILE"`
-	
+
+	// Tidal configuration
+	TidalEnabled      bool   `envconfig:"TIDAL_ENABLED" default:"false"`
+	TidalClientID     string `envconfig:"TIDAL_CLIENT_ID"`
+	TidalClientSecret string `envconfig:"TIDAL_CLIENT_SECRET"`
+
 	// Platform configurations (dynamically loaded)
 	Platforms map[string]*PlatformConfig `json:"-"`
 }
@@ -75,20 +80,20 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Initialize platform configurations
 	cfg.Platforms = make(map[string]*PlatformConfig)
-	
+
 	// Load built-in platform configurations
 	if err := cfg.loadBuiltinPlatforms(); err != nil {
 		return nil, fmt.Errorf("failed to load builtin platforms: %w", err)
 	}
-	
+
 	// Load additional platforms from environment
 	if err := cfg.loadDynamicPlatforms(); err != nil {
 		return nil, fmt.Errorf("failed to load dynamic platforms: %w", err)
 	}
-	
+
 	return &cfg, nil
 }
 
@@ -108,7 +113,7 @@ func (c *Config) loadBuiltinPlatforms() error {
 			Timeout:      10,  // seconds
 		}
 	}
-	
+
 	// Apple Music configuration
 	if c.AppleMusicKeyID != "" && c.AppleMusicTeamID != "" && c.AppleMusicKeyFile != "" {
 		c.Platforms["apple_music"] = &PlatformConfig{
@@ -123,7 +128,22 @@ func (c *Config) loadBuiltinPlatforms() error {
 			Timeout:    10,  // seconds
 		}
 	}
-	
+
+	// Tidal configuration
+	if c.TidalEnabled && c.TidalClientID != "" && c.TidalClientSecret != "" {
+		c.Platforms["tidal"] = &PlatformConfig{
+			Name:         "tidal",
+			Enabled:      true,
+			AuthMethod:   AuthMethodOAuth2,
+			ClientID:     c.TidalClientID,
+			ClientSecret: c.TidalClientSecret,
+			TokenURL:     "https://auth.tidal.com/v1/oauth2/token",
+			BaseURL:      "https://openapi.tidal.com/v2",
+			RateLimit:    100, // requests per minute
+			Timeout:      10,  // seconds
+		}
+	}
+
 	return nil
 }
 
@@ -157,7 +177,7 @@ func ValidatePlatformConfig(config *PlatformConfig) error {
 	if config.Name == "" {
 		return fmt.Errorf("platform name cannot be empty")
 	}
-	
+
 	switch config.AuthMethod {
 	case AuthMethodOAuth2:
 		if config.ClientID == "" || config.ClientSecret == "" {
@@ -178,11 +198,11 @@ func ValidatePlatformConfig(config *PlatformConfig) error {
 	default:
 		return fmt.Errorf("unsupported auth method: %s", config.AuthMethod)
 	}
-	
+
 	if config.BaseURL == "" {
 		return fmt.Errorf("base_url is required")
 	}
-	
+
 	return nil
 }
 
@@ -191,7 +211,7 @@ func (c *Config) RegisterPlatformConfig(platform string, config *PlatformConfig)
 	if err := ValidatePlatformConfig(config); err != nil {
 		return fmt.Errorf("invalid platform config for %s: %w", platform, err)
 	}
-	
+
 	config.Name = platform
 	c.Platforms[platform] = config
 	return nil
@@ -209,10 +229,10 @@ func (c *Config) GetAuthConfig(platform string) (map[string]string, error) {
 	if !exists {
 		return nil, fmt.Errorf("platform %s not configured", platform)
 	}
-	
+
 	auth := make(map[string]string)
 	auth["method"] = string(config.AuthMethod)
-	
+
 	switch config.AuthMethod {
 	case AuthMethodOAuth2:
 		auth["client_id"] = config.ClientID
@@ -231,7 +251,7 @@ func (c *Config) GetAuthConfig(platform string) (map[string]string, error) {
 		auth["username"] = config.Username
 		auth["password"] = config.Password
 	}
-	
+
 	return auth, nil
 }
 
@@ -239,38 +259,38 @@ func (c *Config) GetAuthConfig(platform string) (map[string]string, error) {
 // using a standardized naming convention: PLATFORM_<NAME>_<KEY>
 func ConfigFromEnvironment(platformName string) (*PlatformConfig, error) {
 	prefix := fmt.Sprintf("PLATFORM_%s", strings.ToUpper(platformName))
-	
+
 	var envConfig struct {
 		Enabled    bool   `envconfig:"ENABLED" default:"false"`
 		AuthMethod string `envconfig:"AUTH_METHOD" default:"api_key"`
-		
+
 		ClientID     string `envconfig:"CLIENT_ID"`
 		ClientSecret string `envconfig:"CLIENT_SECRET"`
 		TokenURL     string `envconfig:"TOKEN_URL"`
-		
+
 		KeyID   string `envconfig:"KEY_ID"`
 		TeamID  string `envconfig:"TEAM_ID"`
 		KeyFile string `envconfig:"KEY_FILE"`
-		
+
 		APIKey    string `envconfig:"API_KEY"`
 		APISecret string `envconfig:"API_SECRET"`
-		
+
 		Username string `envconfig:"USERNAME"`
 		Password string `envconfig:"PASSWORD"`
-		
+
 		BaseURL   string `envconfig:"BASE_URL"`
 		RateLimit int    `envconfig:"RATE_LIMIT" default:"60"`
 		Timeout   int    `envconfig:"TIMEOUT" default:"10"`
 	}
-	
+
 	if err := envconfig.Process(prefix, &envConfig); err != nil {
 		return nil, err
 	}
-	
+
 	if !envConfig.Enabled {
 		return nil, nil // Platform not enabled
 	}
-	
+
 	config := &PlatformConfig{
 		Name:         platformName,
 		Enabled:      envConfig.Enabled,
@@ -289,6 +309,6 @@ func ConfigFromEnvironment(platformName string) (*PlatformConfig, error) {
 		RateLimit:    envConfig.RateLimit,
 		Timeout:      envConfig.Timeout,
 	}
-	
+
 	return config, ValidatePlatformConfig(config)
 }

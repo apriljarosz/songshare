@@ -12,14 +12,14 @@ func TestSpotifyServiceIntegration(t *testing.T) {
 	// Check if we have Spotify credentials for integration testing
 	clientID := os.Getenv("TEST_SPOTIFY_CLIENT_ID")
 	clientSecret := os.Getenv("TEST_SPOTIFY_CLIENT_SECRET")
-	
+
 	if clientID == "" || clientSecret == "" {
 		t.Log("Skipping Spotify integration tests - TEST_SPOTIFY_CLIENT_ID and TEST_SPOTIFY_CLIENT_SECRET not set")
-		
+
 		// Run mock tests instead
 		cache := servicetest.CreateTestCache()
 		service := NewSpotifyService("fake-client-id", "fake-client-secret", cache)
-		
+
 		mockSuite := &servicetest.MockPlatformServiceTestSuite{
 			Service:      service,
 			PlatformName: "spotify",
@@ -29,15 +29,15 @@ func TestSpotifyServiceIntegration(t *testing.T) {
 				"4iV5W9uYEdYUVa79Axb7Rh",
 			),
 		}
-		
+
 		mockSuite.RunMockTestSuite(t)
 		return
 	}
-	
+
 	// Run full integration test suite
 	cache := servicetest.CreateTestCache()
 	service := NewSpotifyService(clientID, clientSecret, cache)
-	
+
 	suite := &servicetest.PlatformServiceTestSuite{
 		Service:      service,
 		PlatformName: "spotify",
@@ -69,7 +69,7 @@ func TestSpotifyServiceIntegration(t *testing.T) {
 		SkipISRC:   false,
 		SkipSearch: false,
 	}
-	
+
 	suite.RunFullTestSuite(t)
 }
 
@@ -77,14 +77,14 @@ func TestSpotifyServiceIntegration(t *testing.T) {
 func BenchmarkSpotifyService(b *testing.B) {
 	clientID := os.Getenv("TEST_SPOTIFY_CLIENT_ID")
 	clientSecret := os.Getenv("TEST_SPOTIFY_CLIENT_SECRET")
-	
+
 	if clientID == "" || clientSecret == "" {
 		b.Skip("Skipping Spotify benchmarks - credentials not provided")
 	}
-	
+
 	cache := servicetest.CreateTestCache()
 	service := NewSpotifyService(clientID, clientSecret, cache)
-	
+
 	suite := &servicetest.PlatformServiceBenchmarkSuite{
 		Service:     service,
 		TestTrackID: "4iV5W9uYEdYUVa79Axb7Rh",
@@ -95,6 +95,6 @@ func BenchmarkSpotifyService(b *testing.B) {
 			Limit:  5,
 		},
 	}
-	
+
 	suite.RunBenchmarks(b)
 }

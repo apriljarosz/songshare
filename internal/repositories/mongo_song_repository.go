@@ -295,7 +295,7 @@ func (r *mongoSongRepository) SaveMany(ctx context.Context, songs []*models.Song
 
 	now := time.Now()
 	docs := make([]interface{}, len(songs))
-	
+
 	for i, song := range songs {
 		song.SchemaVersion = models.CurrentSchemaVersion
 		song.UpdatedAt = now
@@ -347,31 +347,31 @@ func (r *mongoSongRepository) FindByIDPrefix(ctx context.Context, prefix string)
 	if len(prefix) < 8 {
 		return nil, fmt.Errorf("prefix must be at least 8 characters")
 	}
-	
+
 	// Take only the first 8 characters for consistency
 	prefix = prefix[:8]
-	
+
 	// Create ObjectID range for prefix matching
 	startHex := prefix + "0000000000000000" // Pad with zeros to get minimum
 	endHex := prefix + "ffffffffffffffff"   // Pad with 'f' to get maximum
-	
+
 	startID, err := primitive.ObjectIDFromHex(startHex)
 	if err != nil {
 		return nil, fmt.Errorf("invalid prefix: %w", err)
 	}
-	
+
 	endID, err := primitive.ObjectIDFromHex(endHex)
 	if err != nil {
 		return nil, fmt.Errorf("invalid prefix: %w", err)
 	}
-	
+
 	filter := bson.M{
 		"_id": bson.M{
 			"$gte": startID,
 			"$lte": endID,
 		},
 	}
-	
+
 	var song models.Song
 	err = r.collection.FindOne(ctx, filter).Decode(&song)
 	if err != nil {
@@ -380,7 +380,7 @@ func (r *mongoSongRepository) FindByIDPrefix(ctx context.Context, prefix string)
 		}
 		return nil, fmt.Errorf("failed to find song by ID prefix: %w", err)
 	}
-	
+
 	r.handleSchemaEvolution(&song)
 	return &song, nil
 }

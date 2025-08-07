@@ -1,0 +1,13 @@
+---
+globs: *.go
+---
+## Go style and design guidance
+
+- **Naming**: Use descriptive names for exported identifiers and function parameters. Avoid abbreviations. Prefer clarity over brevity.
+- **Errors**: Return sentinel or wrapped errors; avoid logging deep in libraries. Wrap with context using `fmt.Errorf("...: %w", err)`.
+- **Context**: Always thread `context.Context` from handlers to services to repositories. Do not store contexts in structs.
+- **Interfaces**: Define small, behavior-focused interfaces near consumers. Reuse repository/service interfaces from [internal/repositories](mdc:internal/repositories/) and [internal/services](mdc:internal/services/) where applicable.
+- **Control flow**: Prefer guard clauses and early returns; avoid deep nesting. Handle edge cases first.
+- **Concurrency**: Use goroutines only with clear ownership and lifecycle tied to a context. Protect shared state; prefer channels or confined ownership.
+- **Testing**: Place tests alongside code with `_test.go`. Use packages in [internal/testutil](mdc:internal/testutil/) and [internal/testutil/servicetest](mdc:internal/testutil/servicetest/) for helpers.
+- **Formatting**: Run `gofmt` and follow existing file style. Keep lines readable; split long expressions across lines.

@@ -1,0 +1,8 @@
+---
+globs: cmd/**
+---
+## CLI commands
+
+- **Pattern**: Keep command `main` small; delegate to internal packages. Wire configuration and logging at the edge.
+- **Example**: Album art backfill in [cmd/backfill-album-art/main.go](mdc:cmd/backfill-album-art/main.go).
+- **Context**: Respect cancelation; allow graceful shutdown.

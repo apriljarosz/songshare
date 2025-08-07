@@ -1,0 +1,10 @@
+---
+globs: internal/handlers/*.go
+---
+## HTTP handlers
+
+- **Responsibilities**: Validate and parse inputs, call services, transform outputs via render helpers, and set correct status codes.
+- **Rendering**: Use helpers in [render/response.go](mdc:internal/handlers/render/response.go) and [render/html.go](mdc:internal/handlers/render/html.go). For HTML, prefer templates in [internal/templates](mdc:internal/templates/).
+- **Examples**: See [platform_ui.go](mdc:internal/handlers/platform_ui.go) and [songs.go](mdc:internal/handlers/songs.go) for patterns.
+- **Context**: Propagate request context to services and repositories.
+- **Errors**: Map domain errors to HTTP statuses at the edge; avoid leaking internal details.

@@ -57,8 +57,8 @@ var platformUIRegistry = map[string]*PlatformUIConfig{
 	},
 	"tidal": {
 		Name:        "Tidal",
-		IconURL:     "https://upload.wikimedia.org/wikipedia/commons/0/05/Tidal_Logo.svg",
-		IconType:    "svg",
+		IconURL:     "https://upload.wikimedia.org/wikipedia/commons/thumb/5/55/Cib-tidal_%28CoreUI_Icons_v1.0.0%29.svg/640px-Cib-tidal_%28CoreUI_Icons_v1.0.0%29.svg.png",
+		IconType:    "png",
 		Color:       "#000000",
 		ButtonText:  "Open in Tidal",
 		BadgeClass:  "platform-tidal",
@@ -80,7 +80,7 @@ func GetPlatformUIConfig(platform string) *PlatformUIConfig {
 	if config, exists := platformUIRegistry[platform]; exists {
 		return config
 	}
-	
+
 	// Return default config for unknown platforms
 	return &PlatformUIConfig{
 		Name:        formatPlatformName(platform),
@@ -124,12 +124,12 @@ func formatPlatformName(platform string) string {
 // RenderPlatformIcon generates HTML for a platform icon
 func RenderPlatformIcon(platform string, cssClass string) string {
 	config := GetPlatformUIConfig(platform)
-	
+
 	if config.IconURL == "" {
 		// Return empty string or text fallback for platforms without icons
 		return ""
 	}
-	
+
 	return fmt.Sprintf(
 		`<img src="%s" alt="" class="%s" aria-hidden="true">`,
 		config.IconURL,
@@ -140,7 +140,7 @@ func RenderPlatformIcon(platform string, cssClass string) string {
 // RenderPlatformBadge generates HTML for a platform badge (used in search results)
 func RenderPlatformBadge(platform, platformURL string) string {
 	config := GetPlatformUIConfig(platform)
-	
+
 	var iconHTML string
 	if config.IconURL != "" {
 		iconHTML = fmt.Sprintf(
@@ -148,7 +148,7 @@ func RenderPlatformBadge(platform, platformURL string) string {
 			config.IconURL,
 		)
 	}
-	
+
 	return fmt.Sprintf(
 		`<a href="%s" target="_blank" class="platform-badge %s" style="text-decoration: none; color: inherit;" aria-label="%s">%s%s</a>`,
 		platformURL,
@@ -162,7 +162,7 @@ func RenderPlatformBadge(platform, platformURL string) string {
 // RenderPlatformButton generates HTML for a platform button (used in share pages)
 func RenderPlatformButton(platform, platformURL string) string {
 	config := GetPlatformUIConfig(platform)
-	
+
 	var iconHTML string
 	if config.IconURL != "" {
 		iconHTML = fmt.Sprintf(
@@ -170,7 +170,7 @@ func RenderPlatformButton(platform, platformURL string) string {
 			config.IconURL,
 		)
 	}
-	
+
 	return fmt.Sprintf(
 		`<a href="%s" target="_blank" class="platform-btn %s" rel="noopener noreferrer" aria-label="%s">%s%s</a>`,
 		platformURL,
@@ -185,12 +185,12 @@ func RenderPlatformButton(platform, platformURL string) string {
 func GetPlatformCSS() string {
 	var css strings.Builder
 	css.WriteString(":root {\n")
-	
+
 	for platform, config := range platformUIRegistry {
 		variableName := fmt.Sprintf("--color-%s", strings.ReplaceAll(platform, "_", "-"))
 		css.WriteString(fmt.Sprintf("  %s: %s;\n", variableName, config.Color))
 	}
-	
+
 	css.WriteString("}\n")
 	return css.String()
 }
@@ -203,21 +203,21 @@ func ValidateIconURL(url string) bool {
 
 // PlatformUIOptions represents options for customizing platform UI rendering
 type PlatformUIOptions struct {
-	ShowIcon      bool
-	ShowText      bool
-	IconClass     string
-	LinkTarget    string // "_blank", "_self", etc.
-	CustomClass   string
-	AriaLabel     string
-	WrapperTag    string // "div", "span", etc.
+	ShowIcon    bool
+	ShowText    bool
+	IconClass   string
+	LinkTarget  string // "_blank", "_self", etc.
+	CustomClass string
+	AriaLabel   string
+	WrapperTag  string // "div", "span", etc.
 }
 
 // RenderPlatformWithOptions provides more flexible platform UI rendering
 func RenderPlatformWithOptions(platform, platformURL string, options PlatformUIOptions) string {
 	config := GetPlatformUIConfig(platform)
-	
+
 	var html strings.Builder
-	
+
 	// Start wrapper if specified
 	if options.WrapperTag != "" {
 		html.WriteString(fmt.Sprintf("<%s", options.WrapperTag))
@@ -226,10 +226,10 @@ func RenderPlatformWithOptions(platform, platformURL string, options PlatformUIO
 		}
 		html.WriteString(">")
 	}
-	
+
 	// Start link
 	html.WriteString(fmt.Sprintf(`<a href="%s"`, platformURL))
-	
+
 	// Add target if specified
 	if options.LinkTarget != "" {
 		html.WriteString(fmt.Sprintf(` target="%s"`, options.LinkTarget))
@@ -237,23 +237,23 @@ func RenderPlatformWithOptions(platform, platformURL string, options PlatformUIO
 			html.WriteString(` rel="noopener noreferrer"`)
 		}
 	}
-	
+
 	// Add classes
 	classes := []string{config.BadgeClass}
 	if options.CustomClass != "" {
 		classes = append(classes, options.CustomClass)
 	}
 	html.WriteString(fmt.Sprintf(` class="%s"`, strings.Join(classes, " ")))
-	
+
 	// Add aria-label
 	ariaLabel := options.AriaLabel
 	if ariaLabel == "" {
 		ariaLabel = config.Description
 	}
 	html.WriteString(fmt.Sprintf(` aria-label="%s"`, ariaLabel))
-	
+
 	html.WriteString(">")
-	
+
 	// Add icon if requested and available
 	if options.ShowIcon && config.IconURL != "" {
 		iconClass := "platform-icon"
@@ -266,19 +266,19 @@ func RenderPlatformWithOptions(platform, platformURL string, options PlatformUIO
 			iconClass,
 		))
 	}
-	
+
 	// Add text if requested
 	if options.ShowText {
 		html.WriteString(config.Name)
 	}
-	
+
 	// Close link
 	html.WriteString("</a>")
-	
+
 	// Close wrapper if specified
 	if options.WrapperTag != "" {
 		html.WriteString(fmt.Sprintf("</%s>", options.WrapperTag))
 	}
-	
+
 	return html.String()
 }

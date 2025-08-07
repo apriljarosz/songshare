@@ -1,0 +1,1509 @@
+╭───────────────────────────────────────────────────╮
+│ ✻ Welcome to Claude Code!                         │
+│                                                   │
+│   /help for help, /status for your current setup  │
+│                                                   │
+│   cwd: /Users/april/repos/personal/songshare      │
+╰───────────────────────────────────────────────────╯
+
+> /clear 
+  ⎿  (no content)
+
+> I think some of the files in this project are getting very long and bloated. See if there are any oppurtunities for modularization and 
+  general clean up. Be realistic with it, I don't want things to break. Are there any tools that can help us extract functions even?
+
+⏺ I'll analyze your codebase to identify opportunities for modularization and cleanup. Let me start by examining the structure and finding
+   the longest, most complex files.
+
+⏺ Bash(find . -name "*.go" -type f | grep -v vendor | xargs wc -l | sort -nr | head -20)
+  ⎿     13520 total                                       
+         1925 ./internal/handlers/songs.go
+          735 ./internal/services/platform_service_test.go
+     … +17 lines (ctrl+r to expand)
+
+⏺ Now let me examine the largest file to understand its structure:
+
+⏺ Read(internal/handlers/songs.go)
+  ⎿  Read 100 lines (ctrl+r to expand)
+
+⏺ Let me continue reading this large file to understand its structure:
+
+⏺ Bash(grep -n "^func " ./internal/handlers/songs.go | head -20)
+  ⎿  96:func NewSongHandler(resolutionService *services.SongResolutionService, songRepository repositories.SongRepository, baseURL string)
+     *SongHandler {
+     106:func (h *SongHandler) ResolveSong(c *gin.Context) {
+     … +20 lines (ctrl+r to expand)
+
+⏺ Let me examine the Tidal service file which is also quite long:
+
+⏺ Bash(grep -n "^func " ./internal/services/tidal_service.go | head -15)
+  ⎿  29:func NewTidalService(cfg *config.PlatformConfig) (*TidalService, error) {
+     56:func (t *TidalService) GetPlatformName() string {
+     61:func (t *TidalService) BuildURL(trackID string) string {
+     … +13 lines (ctrl+r to expand)
+
+⏺ Let me also check what Go tools are available for refactoring:
+
+⏺ Web Search("golang refactoring tools extract function modularization 2024")
+  ⎿  Did 1 search in 16s                                                                                                                  
+
+⏺ Let me examine the structure of the large repository file:
+
+⏺ Bash(grep -n "^func " ./internal/repositories/mongo_song_repository.go)
+  ⎿  24:func NewMongoSongRepository(db *models.Database) SongRepository {                   
+     31:func (r *mongoSongRepository) Save(ctx context.Context, song *models.Song) error {
+     55:func (r *mongoSongRepository) Update(ctx context.Context, song *models.Song) error {
+     … +12 lines (ctrl+r to expand)
+
+⏺ Now let me check if there are any repeated patterns or utility functions that could be extracted:
+
+⏺ Bash(grep -r "func.*HTML" ./internal/handlers/ | head -10)
+  ⎿  ./internal/handlers/songs_test.go:func TestSongHandler_RedirectToSong_HTML(t *testing.T) {                               
+     ./internal/handlers/songs.go:func (h *SongHandler) renderSearchResultsHTML(results []SearchResultWithSource) string {
+     ./internal/handlers/songs.go:func (h *SongHandler) renderGroupedSearchResultsHTML(results []GroupedSearchResult) string {
+
+⏺ Bash(wc -l ./internal/handlers/songs.go && echo "---" && grep -c "template\.HTML" ./internal/handlers/songs.go)
+  ⎿  Error: 1925 ./internal/handlers/songs.go
+     ---
+     0
+
+⏺ Let me examine more of the large files structure to understand modularization opportunities:
+
+⏺ Read(internal/handlers/songs.go)
+  ⎿  Read 50 lines (ctrl+r to expand)
+
+⏺ Let me examine the project structure to see if there are any existing modular patterns:
+
+⏺ List(internal)
+  ⎿  Listed 47 paths (ctrl+r to expand)
+
+⏺ Let me check for duplicate code patterns across the services:
+
+⏺ Bash(grep -n "makeAPIRequest\|makeRawAPIRequest\|Health" ./internal/services/*.go | head -10)
+  ⎿  ./internal/services/apple_music_service.go:274:// Health checks Apple Music API health                        
+     ./internal/services/apple_music_service.go:275:func (s *appleMusicService) Health(ctx context.Context) error {
+     ./internal/services/platform_service.go:32:	// Health checks if the platform service is healthy
+     … +7 lines (ctrl+r to expand)
+
+⏺ Let me examine what constitutes the bloat in the songs.go file more specifically:
+
+⏺ Bash(awk '/^func.*{$/ {print NR ": " $0} /^}$/ {if(start) print NR-start " lines"; start=NR+1}' ./internal/handlers/songs.go | grep -E
+      "[0-9]+ lines$" | sort -nr | h…)
+  ⎿  349 lines                    
+     193 lines
+     180 lines
+     … +7 lines (ctrl+r to expand)
+
+⏺ Bash(awk 'BEGIN{FS=" "; start=0} /^func.*{$/ {if(start>0) print prev ": " start-prev " lines"; prev=$0; start=NR} END{if(start>0) print
+      prev ": " NR-start+1 " lines"…)
+  ⎿ func NewSongHandler(resolutionService *services.SongResolutionService, songRepository repositories.SongRepository, baseURL string) *So
+    ngHandler {: 96 lines
+    func (h *SongHandler) SearchSongs(c *gin.Context) {: 173 lines
+    … +9 lines (ctrl+r to expand)
+
+
+⏺ Now let me check what kind of directory structure would make sense for modularization:
+
+⏺ Read(internal/handlers/songs.go)
+  ⎿  Read 30 lines (ctrl+r to expand)
+
+⏺ Based on my analysis of your codebase, I can see significant opportunities for modularization and cleanup. Here's what I found:
+
+  Current State Analysis
+
+  Largest/Most Complex Files:
+  1. internal/handlers/songs.go - 1,925 lines (severely bloated)
+  2. internal/services/tidal_service.go - 724 lines
+  3. internal/services/platform_service_test.go - 735 lines
+  4. internal/handlers/songs_test.go - 584 lines
+
+  Major Issues in songs.go:
+  - Massive functions: SearchResults (350+ lines), SearchPage (350+ lines)
+  - Embedded HTML templates directly in Go code (hundreds of lines of HTML)
+  - Mixed concerns: HTTP handling, HTML rendering, search logic, data transformation
+  - Duplicate HTML rendering patterns
+
+  Available Tools
+
+  Automated Refactoring Tools:
+  - gopls (built into VS Code/GoLand): Extract function refactoring via code actions
+  - Go Doctor: Standalone refactoring engine
+  - Example-based refactoring (eg): Part of golang.org/x/tools
+
+  Current Limitations:
+  - gopls extract function has issues with comments (being fixed in 2024)
+  - Manual refactoring might be more reliable for complex cases
+                                                                                      
+⏺ User approved Claude's plan:
+  ⎿  Modularization and Cleanup Plan
+
+     Phase 1: Extract HTML Templates (Low Risk)
+
+     - Create internal/templates/ package for HTML templates
+     - Extract embedded HTML from songs.go into separate template files
+     - Replace inline HTML strings with template rendering calls
+     - Impact: ~400-500 lines removed from songs.go
+
+     Phase 2: Extract HTTP Response Rendering (Low Risk)
+
+     - Create internal/handlers/render/ package for response utilities
+     - Extract renderSongJSON, renderSongPage, renderSearchResultsHTML functions
+     - Standardize response patterns across handlers
+     - Impact: ~200-300 lines moved from songs.go
+
+     Phase 3: Extract Search Logic (Medium Risk)
+
+     - Create internal/search/ package for search coordination
+     - Move searchLocalSongs, searchPlatforms, result grouping logic
+     - Keep HTTP handling in handlers, move business logic to dedicated search service
+     - Impact: ~300-400 lines moved from songs.go
+
+     Phase 4: Extract Common Service Patterns (Medium Risk)
+
+     - Create internal/services/common/ for shared API client utilities
+     - Extract common HTTP client patterns from Tidal/Spotify/Apple services
+     - Standardize error handling and authentication refresh patterns
+     - Impact: ~100-150 lines reduced across service files
+
+     Phase 5: Split Large Test Files (Low Risk)
+
+     - Split platform_service_test.go by service type
+     - Group related test functions into focused test files
+     - Impact: Better test organization and maintainability
+
+     Validation Strategy
+
+     - Run existing tests after each phase to ensure no regressions
+     - Use go fmt, golangci-lint, and go vet to maintain code quality
+     - Preserve all existing API contracts and HTTP endpoints
+
+⏺ Update Todos
+  ⎿  ☐ Phase 1: Extract HTML templates from songs.go into internal/templates/ 
+     ☐ Phase 2: Extract HTTP response rendering into internal/handlers/render/
+     ☐ Phase 3: Extract search logic into internal/search/
+     ☐ Phase 4: Extract common service patterns into internal/services/common/
+     ☐ Phase 5: Split large test files for better organization
+
+⏺ Update Todos
+  ⎿  ☐ Phase 1: Extract HTML templates from songs.go into internal/templates/ 
+     ☐ Phase 2: Extract HTTP response rendering into internal/handlers/render/
+     ☐ Phase 3: Extract search logic into internal/search/
+     ☐ Phase 4: Extract common service patterns into internal/services/common/
+     ☐ Phase 5: Split large test files for better organization
+
+⏺ I'll start with Phase 1: extracting HTML templates. First, let me identify all the embedded HTML in songs.go:
+
+⏺ Bash(grep -n "htmlTemplate\|html\.WriteString\|<!DOCTYPE\|<html" ./internal/handlers/songs.go)
+  ⎿  357:	htmlTemplate := `        
+     358:<!DOCTYPE html>
+     359:<html lang="en">
+     … +44 lines (ctrl+r to expand)
+
+⏺ Now let me create the templates directory and start extracting the templates:
+
+⏺ Bash(mkdir -p ./internal/templates)
+  ⎿  (No content)
+
+⏺ Let me examine the song page template first:
+
+⏺ Read(internal/handlers/songs.go)
+  ⎿  Read 80 lines (ctrl+r to expand)
+
+⏺ Now let me create the song page template file:
+
+⏺ Write(internal/templates/song_page.html)
+  ⎿  Wrote 79 lines to internal/templates/song_page.html                       
+     <!DOCTYPE html>
+     <html lang="en">
+     <head>
+         <meta charset="UTF-8">
+         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+         <title>{{.Song.Title}} - {{.Song.Artist}}</title>
+         <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+         <!-- Apple Music SVG Icon -->
+         <svg style="display: none;" xmlns="http://www.w3.org/2000/svg">
+     … +69 lines (ctrl+r to expand)
+
+⏺ Now let me examine the search page template:
+
+⏺ Read(internal/handlers/songs.go)
+  ⎿  Read 100 lines (ctrl+r to expand)
+
+⏺ Let me continue reading to get the full search template:
+
+⏺ Read(internal/handlers/songs.go)
+  ⎿  Read 100 lines (ctrl+r to expand)
+
+⏺ Let me read the rest of the search template:
+
+⏺ Read(internal/handlers/songs.go)
+  ⎿  Read 50 lines (ctrl+r to expand)
+
+⏺ Read(internal/handlers/songs.go)
+  ⎿  Read 50 lines (ctrl+r to expand)
+
+⏺ Let me get the last part of the search template:
+
+⏺ Read(internal/handlers/songs.go)
+  ⎿  Read 20 lines (ctrl+r to expand)
+
+⏺ Now I'll create the search page template:
+
+⏺ Write(internal/templates/search_page.html)
+  ⎿  Wrote 311 lines to internal/templates/search_page.html                    
+     <!DOCTYPE html>
+     <html lang="en">
+     <head>
+         <meta charset="UTF-8">
+         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+         <title>Search Songs - SongShare</title>
+         <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+         <script>
+             async function createShareLink(url, button) {
+     … +301 lines (ctrl+r to expand)
+
+⏺ Now I need to create a template manager/loader package:
+
+⏺ Write(internal/templates/templates.go)
+  ⎿  Wrote 69 lines to internal/templates/templates.go
+     package templates
+     import (
+       "embed"
+       "html/template"
+       "sync"
+     )
+     //go:embed *.html
+     var templateFiles embed.FS
+     … +59 lines (ctrl+r to expand)
+
+⏺ Now I need to update the songs.go handler to use the extracted templates. Let me first read the relevant sections:
+
+⏺ Read(internal/handlers/songs.go)
+  ⎿  Read 30 lines (ctrl+r to expand)
+
+⏺ Let me read more to find where the template parsing happens:
+
+⏺ Read(internal/handlers/songs.go)
+  ⎿  Read 30 lines (ctrl+r to expand)
+
+⏺ Now let me update the renderSongPage function to use the templates:
+
+⏺ Update(internal/handlers/songs.go)
+  ⎿  Updated internal/handlers/songs.go with 1 addition                                        
+       19      "songshare/internal/repositories"
+       20      "songshare/internal/scoring"
+       21      "songshare/internal/services"
+       22 +    "songshare/internal/templates"
+       23    )
+       24    
+       25    // ResolveSongRequest represents the request to resolve a song from a platform URL
+
+⏺ Now I'll replace the inline template parsing with the template manager:
+
+⏺ Update(internal/handlers/songs.go)
+  ⎿  Updated internal/handlers/songs.go with 1 addition and 82 removals                                                                   
+       355      }
+       356    
+       357      // HTML template with HTMX support
+       358 -    htmlTemplate := `
+       359 -  <!DOCTYPE html>
+       360 -  <html lang="en">
+       361 -  <head>
+       362 -      <meta charset="UTF-8">
+       363 -      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+       364 -      <title>{{.Song.Title}} - {{.Song.Artist}}</title>
+       365 -      <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+       366 -      
+       367 -      <!-- Apple Music SVG Icon -->
+       368 -      <svg style="display: none;" xmlns="http://www.w3.org/2000/svg">
+       369 -          <defs>
+       370 -              <symbol id="apple-music-icon" viewBox="0 0 24 24">
+       371 -                  <!-- Apple Music circular icon with gradient -->
+       372 -                  <circle cx="12" cy="12" r="12" fill="url(#appleMusicGradient)"/>
+       373 -                  <path d="M18.013 12.063l-5.718-1.691c-.303-.09-.617.09-.705.399-.089.309.085.632.388.721l5.718 
+           - 1.691c.193.057.402-.029.512-.211.11-.182.11-.406 0-.588-.11-.182-.319-.268-.195-.321zM9.845 18.857c-.89-.263-1.835.243-2.11 
+           - 1.132-.275.89.243 1.835 1.132 2.11.89.275 1.835-.243 2.11-1.132.275-.89-.243-1.835-1.132-2.11zm4.458 
+           - 3.338c-.302-.089-.617.09-.705.399-.089.309.085.632.388.721.302.089.617-.09.705-.399.089-.309-.085-.632-.388-.721z" 
+           - fill="white"/>
+       374 -                  <defs>
+       375 -                      <linearGradient id="appleMusicGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+       376 -                          <stop offset="0%" style="stop-color:#fa233b"/>
+       377 -                          <stop offset="50%" style="stop-color:#fb5c74"/>
+       378 -                          <stop offset="100%" style="stop-color:#ff9500"/>
+       379 -                      </linearGradient>
+       380 -                  </defs>
+       381 -              </symbol>
+       382 -          </defs>
+       383 -      </svg>
+       384 -      
+       385 -      <style>
+       386 -          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 
+     2rem
+           -  auto; padding: 1rem; }
+       387 -          .song-header { text-align: center; margin-bottom: 2rem; }
+       388 -          .album-art { width: 200px; height: 200px; border-radius: 12px; margin: 0 auto 1rem; box-shadow: 0 8px 32px 
+           - rgba(0,0,0,0.2); display: block; }
+       389 -          .song-title { font-size: 2rem; font-weight: bold; margin-bottom: 0.5rem; }
+       390 -          .song-artist { font-size: 1.2rem; color: #666; margin-bottom: 0.5rem; }
+       391 -          .song-album { font-size: 1rem; color: #888; }
+       392 -          .platforms { display: flex; flex-direction: column; gap: 1rem; }
+       393 -          .platform-button { display: flex; align-items: center; padding: 1rem; border: 2px solid #ddd; border-radius: 8px; 
+           - text-decoration: none; color: inherit; transition: all 0.2s; min-height: 60px; }
+       394 -          .platform-button:hover { border-color: #007AFF; transform: translateY(-1px); }
+       395 -          .spotify:hover { border-color: #1ED760 !important; }
+       396 -          .apple_music:hover { border-color: #f94c57 !important; }
+       397 -          .youtube_music:hover { border-color: #FF0000 !important; }
+       398 -          .deezer:hover { border-color: #FEAA2D !important; }
+       399 -          .tidal:hover { border-color: #000000 !important; }
+       400 -          .soundcloud:hover { border-color: #FF8800 !important; }
+       401 -          .platform-name { font-weight: bold; font-size: 1.1rem; display: flex; align-items: center; gap: 1rem; flex: 1; }
+       402 -          .platform-icon { width: 44px; height: 44px; flex-shrink: 0; object-fit: contain; }
+       403 -      </style>
+       404 -  </head>
+       405 -  <body>
+       406 -      <div class="song-header">
+       407 -          {{if .AlbumArt}}<img src="{{.AlbumArt}}" alt="Album art for {{.Song.Title}}" class="album-art">{{end}}
+       408 -          <div class="song-title">{{.Song.Title}}</div>
+       409 -          <div class="song-artist">{{.Song.Artist}}</div>
+       410 -          {{if .Song.Album}}<div class="song-album">{{.Song.Album}}</div>{{end}}
+       411 -      </div>
+       412 -      
+       413 -      <div class="platforms">
+       414 -          {{range .Platforms}}
+       415 -          <a href="{{.URL}}" target="_blank" class="platform-button {{.Platform}}" 
+       416 -             hx-get="/api/v1/analytics/click?platform={{.Platform}}&song={{$.Song.ID.Hex}}"
+       417 -             hx-trigger="mouseup"
+       418 -             hx-swap="none">
+       419 -              <div class="platform-name">
+       420 -                  {{if .IconURL}}<img src="{{.IconURL}}" alt="" class="platform-icon" aria-hidden="true">{{end}}
+       421 -                  {{.ButtonText}}
+       422 -              </div>
+       423 -          </a>
+       424 -          {{end}}
+       425 -          
+       426 -          {{if not .PlatformURLs}}
+       427 -          <div style="text-align: center; color: #666;">
+       428 -              <p>This song is not currently available on supported platforms.</p>
+       429 -          </div>
+       430 -          {{end}}
+       431 -      </div>
+       432 -      
+       433 -      <div style="text-align: center; margin-top: 2rem; font-size: 0.8rem; color: #999;">
+       434 -          <p>Powered by SongShare</p>
+       435 -      </div>
+       436 -  </body>
+       437 -  </html>`
+       438 -  
+       439 -    tmpl, err := template.New("song").Parse(htmlTemplate)
+       358 +    tmpl, err := templates.GetTemplate("song_page")
+       359      if err != nil {
+       360        slog.Error("Failed to parse song template", "error", err)
+       361        c.JSON(http.StatusInternalServerError, gin.H{"error": "Template error"})
+
+⏺ Now let me find and replace the search template:
+
+⏺ Read(internal/handlers/songs.go)
+  ⎿  Read 20 lines (ctrl+r to expand)
+
+⏺ Let me find the SearchPage function:
+
+⏺ Bash(grep -n "SearchPage\|htmlTemplate.*=\|template\.New.*search" ./internal/handlers/songs.go | head -10)
+  ⎿  484:// SearchPage renders the search page HTML        
+     485:func (h *SongHandler) SearchPage(c *gin.Context) {
+     507:	htmlTemplate := `
+     … +1 line (ctrl+r to expand)
+
+⏺ Now let me replace the search template too. First, let me find the full range:
+
+⏺ Read(internal/handlers/songs.go)
+  ⎿  Read 10 lines (ctrl+r to expand)
+
+⏺ Let me find where the template ends:
+
+⏺ Read(internal/handlers/songs.go)
+  ⎿  Read 10 lines (ctrl+r to expand)
+
+⏺ Now I'll replace the entire search template section:
+
+⏺ Update(internal/handlers/songs.go)
+  ⎿  Updated internal/handlers/songs.go with 1 addition and 315 removals                                                                  
+       503        Query: query,
+       504      }
+       505    
+       506 -    // HTML template for search page
+       507 -    htmlTemplate := `
+       508 -  <!DOCTYPE html>
+       509 -  <html lang="en">
+       510 -  <head>
+       511 -      <meta charset="UTF-8">
+       512 -      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+       513 -      <title>Search Songs - SongShare</title>
+       514 -      <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+       515 -      
+       516 -      <script>
+       517 -          async function createShareLink(url, button) {
+       518 -              const originalText = button.innerHTML;
+       519 -              button.innerHTML = 'Creating link...';
+       520 -              button.disabled = true;
+       521 -              
+       522 -              try {
+       523 -                  const controller = new AbortController();
+       524 -                  const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+       525 -                  
+       526 -                  const response = await fetch('/api/v1/songs/resolve', {
+       527 -                      method: 'POST',
+       528 -                      headers: {
+       529 -                          'Content-Type': 'application/json',
+       530 -                          'HX-Request': 'true'
+       531 -                      },
+       532 -                      body: JSON.stringify({ url: url }),
+       533 -                      signal: controller.signal
+       534 -                  });
+       535 -                  
+       536 -                  clearTimeout(timeoutId);
+       537 -                  
+       538 -                  console.log('Response status:', response.status);
+       539 -                  console.log('Response headers:', [...response.headers.entries()]);
+       540 -                  
+       541 -                  if (response.ok) {
+       542 -                      // Try to get redirect URL from response body
+       543 -                      const responseData = await response.json();
+       544 -                      console.log('Response data:', responseData);
+       545 -                      
+       546 -                      const redirectUrl = responseData.redirect || 
+       547 -                                        response.headers.get('HX-Redirect') || 
+       548 -                                        response.headers.get('hx-redirect');
+       549 -                      console.log('Redirect URL:', redirectUrl);
+       550 -                      
+       551 -                      if (redirectUrl) {
+       552 -                          window.location.href = redirectUrl;
+       553 -                          return;
+       554 -                      } else {
+       555 -                          console.log('No redirect URL found in headers or body');
+       556 -                      }
+       557 -                  }
+       558 -                  
+       559 -                  // Fallback: show error
+       560 -                  console.log('Request failed or no redirect found');
+       561 -                  button.innerHTML = 'Error - Check Console';
+       562 -                  setTimeout(() => {
+       563 -                      button.innerHTML = originalText;
+       564 -                      button.disabled = false;
+       565 -                  }, 5000);
+       566 -                  
+       567 -              } catch (error) {
+       568 -                  console.error('Error creating share link:', error);
+       569 -                  if (error.name === 'AbortError') {
+       570 -                      button.innerHTML = 'Timeout - Try Again';
+       571 -                  } else {
+       572 -                      button.innerHTML = 'Network Error';
+       573 -                  }
+       574 -                  setTimeout(() => {
+       575 -                      button.innerHTML = originalText;
+       576 -                      button.disabled = false;
+       577 -                  }, 5000);
+       578 -              }
+       579 -          }
+       580 -          
+       581 -          // Reset any stuck Share buttons
+       582 -          function resetStuckButtons() {
+       583 -              const stuckButtons = document.querySelectorAll('button[onclick*="createShareLink"]');
+       584 -              let resetCount = 0;
+       585 -              stuckButtons.forEach(button => {
+       586 -                  if (button.innerHTML === 'Creating link...' || button.disabled) {
+       587 -                      console.log('Resetting stuck button:', button.innerHTML, 'disabled:', button.disabled);
+       588 -                      button.innerHTML = 'Share';
+       589 -                      button.disabled = false;
+       590 -                      resetCount++;
+       591 -                  }
+       592 -              });
+       593 -              if (resetCount > 0) {
+       594 -                  console.log('Reset', resetCount, 'stuck buttons');
+       595 -              }
+       596 -          }
+       597 -          
+       598 -          // Reset buttons on page load (including back navigation)
+       599 -          document.addEventListener('DOMContentLoaded', resetStuckButtons);
+       600 -          
+       601 -          // Reset buttons when returning from back/forward navigation
+       602 -          window.addEventListener('pageshow', function(event) {
+       603 -              // This fires when page is shown from cache (back button)
+       604 -              resetStuckButtons();
+       605 -          });
+       606 -          
+       607 -          // Reset buttons when HTMX loads new content  
+       608 -          document.body.addEventListener('htmx:afterSwap', resetStuckButtons);
+       609 -          
+       610 -          // Also reset buttons periodically in case we miss events
+       611 -          setInterval(resetStuckButtons, 2000);
+       612 -      </script>
+       613 -      <style>
+       614 -          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 800px; margin: 
+     2rem
+           -  auto; padding: 1rem; line-height: 1.6; }
+       615 -          .header { text-align: center; margin-bottom: 2rem; }
+       616 -          .header h1 { font-size: 2.5rem; margin-bottom: 0.5rem; color: #1a202c; }
+       617 -          .header p { color: #718096; font-size: 1.1rem; }
+       618 -          
+       619 -          .search-container { margin-bottom: 2rem; }
+       620 -          .search-form { display: flex; flex-direction: column; gap: 1rem; }
+       621 -          .search-input { padding: 1rem; font-size: 1.1rem; border: 2px solid #e2e8f0; border-radius: 8px; outline: none; 
+           - transition: border-color 0.2s; }
+       622 -          .search-input:focus { border-color: #4299e1; }
+       623 -          
+       624 -          .filters { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }
+       625 -          .filter-group { display: flex; flex-direction: column; gap: 0.25rem; }
+       626 -          .filter-group label { font-size: 0.9rem; font-weight: 500; color: #4a5568; }
+       627 -          .filter-select { padding: 0.5rem; border: 1px solid #e2e8f0; border-radius: 4px; background: white; }
+       628 -          
+       629 -          .loading { display: none; text-align: center; color: #718096; margin: 1rem 0; }
+       630 -          .htmx-request .loading { display: block; }
+       631 -          
+       632 -          .search-results { margin-top: 2rem; }
+       633 -          .result-item { display: flex; gap: 1rem; padding: 1rem; border: 1px solid #e2e8f0; border-radius: 8px; 
+     margin-bottom:
+           -  1rem; transition: box-shadow 0.2s; }
+       634 -          .result-item:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+       635 -          
+       636 -          .result-image { width: 80px; height: 80px; border-radius: 8px; object-fit: cover; flex-shrink: 0; }
+       637 -          .result-image-placeholder { width: 80px; height: 80px; border-radius: 8px; background: #f7fafc; display: flex; 
+           - align-items: center; justify-content: center; color: #a0aec0; font-size: 2rem; }
+       638 -          
+       639 -          .result-content { flex-grow: 1; }
+       640 -          .result-title { font-size: 1.1rem; font-weight: 600; margin-bottom: 0.25rem; color: #1a202c; }
+       641 -          .explicit-indicator { display: inline-block; background: #666; color: white; font-size: 0.7rem; font-weight: bold; 
+           - padding: 2px 4px; margin-left: 6px; border-radius: 2px; vertical-align: top; }
+       642 -          .result-artist { color: #4a5568; margin-bottom: 0.25rem; }
+       643 -          .result-album { color: #718096; font-size: 0.9rem; margin-bottom: 0.5rem; }
+       644 -          .result-platforms { display: flex; gap: 0.5rem; align-items: center; }
+       645 -          .platform-badge { padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.8rem; font-weight: 500; display: flex; 
+           - align-items: center; gap: 0.25rem; background: white; color: black; border: 2px solid #ddd; transition: all 0.2s ease; 
+     cursor:
+           -  pointer; }
+       646 -          .platform-badge:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+       647 -          .platform-badge-icon { width: 14px; height: 14px; flex-shrink: 0; object-fit: contain; }
+       648 -          .platform-spotify { border-color: #1db954; }
+       649 -          .platform-spotify:hover { border-color: #1ED760; background: #f8fff9; }
+       650 -          .platform-apple-music { border-color: #fa243c; }
+       651 -          .platform-apple-music:hover { border-color: #f94c57; background: #fff8f9; }
+       652 -          .platform-tidal { border-color: #000000; }
+       653 -          .platform-tidal:hover { border-color: #333333; background: #f8f8f8; }
+       654 -          .platform-local { border-color: #4299e1; }
+       655 -          .platform-local:hover { border-color: #63b3ed; background: #f7fafc; }
+       656 -          
+       657 -          .result-actions { display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-end; }
+       658 -          .action-btn { padding: 0.5rem 1rem; border: none; border-radius: 4px; font-size: 0.9rem; cursor: pointer; 
+     transition:
+           -  all 0.2s; text-decoration: none; display: inline-block; text-align: center; }
+       659 -          .action-primary { background: #4299e1; color: white; }
+       660 -          .action-primary:hover { background: #3182ce; }
+       661 -          .action-secondary { background: #e2e8f0; color: #4a5568; }
+       662 -          .action-secondary:hover { background: #cbd5e0; }
+       663 -          .action-small { padding: 0.25rem 0.5rem; font-size: 0.8rem; }
+       664 -          
+       665 -          .platform-actions { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.5rem; }
+       666 -          
+       667 -          .action-success { text-align: center; padding: 1rem; background: #f0fff4; border: 1px solid #68d391; border-radius: 
+           - 4px; }
+       668 -          .action-success p { margin: 0 0 0.5rem 0; color: #2f855a; font-weight: 500; }
+       669 -          
+       670 -          .no-results { text-align: center; color: #718096; margin: 2rem 0; }
+       671 -          .empty-state { text-align: center; color: #718096; margin: 3rem 0; }
+       672 -          
+       673 -          .footer { text-align: center; margin-top: 3rem; padding-top: 2rem; border-top: 1px solid #e2e8f0; color: #a0aec0; 
+           - font-size: 0.9rem; }
+       674 -      </style>
+       675 -  </head>
+       676 -  <body>
+       677 -      <div class="header">
+       678 -          <h1>🎵 SongShare Search</h1>
+       679 -          <p>Find your favorite songs across all platforms</p>
+       680 -      </div>
+       681 -  
+       682 -      <div class="search-container">
+       683 -          <form class="search-form" hx-get="/api/v1/search/results" hx-target="#search-results" hx-trigger="submit, keyup 
+           - delay:500ms from:input[name='q']" hx-indicator="#loading">
+       684 -              <input 
+       685 -                  type="text" 
+       686 -                  name="q" 
+       687 -                  class="search-input" 
+       688 -                  placeholder="Search for songs, artists, or albums..." 
+       689 -                  value="{{.Query}}"
+       690 -                  autocomplete="off"
+       691 -              >
+       692 -              
+       693 -              <div class="filters">
+       694 -                  <div class="filter-group">
+       695 -                      <label for="platform">Platform</label>
+       696 -                      <select name="platform" class="filter-select" hx-get="/api/v1/search/results" 
+     hx-target="#search-results"
+           -  hx-trigger="change" hx-include="closest form" hx-indicator="#loading">
+       697 -                          <option value="">All Platforms</option>
+       698 -                          <option value="apple_music">Apple Music</option>
+       699 -                          <option value="spotify">Spotify</option>
+       700 -                          <option value="tidal">Tidal</option>
+       701 -                      </select>
+       702 -                  </div>
+       703 -                  
+       704 -                  <div class="filter-group">
+       705 -                      <label for="limit">Results</label>
+       706 -                      <select name="limit" class="filter-select" hx-get="/api/v1/search/results" hx-target="#search-results" 
+           - hx-trigger="change" hx-include="closest form" hx-indicator="#loading">
+       707 -                          <option value="10">10 results</option>
+       708 -                          <option value="25">25 results</option>
+       709 -                          <option value="50">50 results</option>
+       710 -                      </select>
+       711 -                  </div>
+       712 -              </div>
+       713 -          </form>
+       714 -          
+       715 -          <div id="loading" class="loading">🔍 Searching...</div>
+       716 -      </div>
+       717 -  
+       718 -      <div id="search-results" class="search-results">
+       719 -          {{if .Query}}
+       720 -              <div hx-get="/api/v1/search/results?q={{.Query}}" hx-trigger="load" hx-target="this" 
+           - hx-indicator="#loading"></div>
+       721 -          {{else}}
+       722 -              <div class="empty-state">
+       723 -                  <p>Start typing to search for songs across Spotify, Apple Music, Tidal, and your local library.</p>
+       724 -              </div>
+       725 -          {{end}}
+       726 -      </div>
+       727 -  
+       728 -      <div class="footer">
+       729 -          <p>Powered by SongShare | <a href="/" style="color: #4299e1;">Home</a></p>
+       730 -      </div>
+       731 -  
+       732 -      <script>
+       733 -          // Update URL when search happens
+       734 -          function updateSearchURL(query) {
+       735 -              const encodedQuery = encodeURIComponent(query.trim());
+       736 -              const newURL = encodedQuery ? '/search/' + encodedQuery : '/search';
+       737 -              
+       738 -              // Only update URL if it's different to avoid unnecessary history entries
+       739 -              if (window.location.pathname + window.location.search !== newURL) {
+       740 -                  window.history.pushState({}, '', newURL);
+       741 -              }
+       742 -          }
+       743 -  
+       744 -          // Progressive enhancement for platform badges
+       745 -          function enhanceSearchResults() {
+       746 -              // Find all result items with ISRCs that might be enhanced
+       747 -              const resultItems = document.querySelectorAll('.result-item[id^="result-"]');
+       748 -              
+       749 -              resultItems.forEach((item, index) => {
+       750 -                  const resultId = item.id;
+       751 -                  const platformsContainer = item.querySelector('.result-platforms');
+       752 -                  
+       753 -                  if (!platformsContainer || platformsContainer.children.length >= 3) {
+       754 -                      return; // Skip if already has many platforms
+       755 -                  }
+       756 -                  
+       757 -                  // Add a delay to avoid overwhelming the server
+       758 -                  setTimeout(() => {
+       759 -                      const currentBadgeCount = platformsContainer.children.length;
+       760 -                      
+       761 -                      // Poll for enhanced badges
+       762 -                      fetch('/api/v1/search/results/' + resultId + '/badges')
+       763 -                          .then(response => response.text())
+       764 -                          .then(html => {
+       765 -                              if (html && html.trim() !== '') {
+       766 -                                  const tempDiv = document.createElement('div');
+       767 -                                  tempDiv.innerHTML = html;
+       768 -                                  const newBadgeCount = tempDiv.children.length;
+       769 -                                  
+       770 -                                  // Only update if we got more platforms
+       771 -                                  if (newBadgeCount > currentBadgeCount) {
+       772 -                                      platformsContainer.innerHTML = html;
+       773 -                                      console.log('Enhanced ' + resultId + ': ' + currentBadgeCount + ' → ' + newBadgeCount + 
+     '
+           -  platforms');
+       774 -                                  }
+       775 -                              }
+       776 -                          })
+       777 -                          .catch(err => {
+       778 -                              // Silently ignore errors for progressive enhancement
+       779 -                              console.debug('Enhancement failed for', resultId, err);
+       780 -                          });
+       781 -                  }, index * 200); // Stagger requests by 200ms each
+       782 -              });
+       783 -          }
+       784 -  
+       785 -          // Auto-enhance search results after they load
+       786 -          document.addEventListener('htmx:afterRequest', function(event) {
+       787 -              if (event.detail.pathInfo.requestPath.includes('/search/results')) {
+       788 -                  // Give a moment for the DOM to update, then enhance
+       789 -                  setTimeout(enhanceSearchResults, 500);
+       790 -              }
+       791 -          });
+       792 -  
+       793 -          // Listen for search input changes with debouncing
+       794 -          let searchTimeout;
+       795 -          document.addEventListener('DOMContentLoaded', function() {
+       796 -              const searchInput = document.querySelector('input[name="q"]');
+       797 -              
+       798 -              if (searchInput) {
+       799 -                  // Update URL on input with debouncing
+       800 -                  searchInput.addEventListener('input', function() {
+       801 -                      clearTimeout(searchTimeout);
+       802 -                      const query = this.value;
+       803 -                      
+       804 -                      searchTimeout = setTimeout(() => {
+       805 -                          updateSearchURL(query);
+       806 -                      }, 500); // Match HTMX delay
+       807 -                  });
+       808 -                  
+       809 -                  // Also update on form submit
+       810 -                  searchInput.closest('form').addEventListener('submit', function(e) {
+       811 -                      e.preventDefault(); // Prevent actual form submission since HTMX handles it
+       812 -                      updateSearchURL(searchInput.value);
+       813 -                  });
+       814 -              }
+       815 -          });
+       816 -      </script>
+       817 -  </body>
+       818 -  </html>`
+       819 -  
+       820 -    tmpl, err := template.New("search").Parse(htmlTemplate)
+       506 +    tmpl, err := templates.GetTemplate("search_page")
+       507      if err != nil {
+       508        slog.Error("Failed to parse search template", "error", err)
+       509        c.JSON(http.StatusInternalServerError, gin.H{"error": "Template error"})
+
+⏺ Now let me test if the changes work by running the tests:
+
+⏺ Bash(go test ./internal/handlers)
+  ⎿  Error: # songshare/internal/handlers [songshare/internal/handlers.test]
+     internal/handlers/songs_test.go:158:28: cannot use mockService (variable of type *MockSongResolutionService) as 
+     *services.SongResolutionService value in argument to NewSongHandler
+     internal/handlers/songs_test.go:158:41: cannot use mockRepo (variable of type *MockSongRepository) as repositories.SongRepository 
+     value in argument to NewSongHandler: *MockSongRepository does not implement repositories.SongRepository (wrong type for method Count)
+     		have Count(interface{}) (int64, error)
+     		want Count(context.Context) (int64, error)
+     internal/handlers/songs_test.go:210:28: cannot use mockService (variable of type *MockSongResolutionService) as 
+     *services.SongResolutionService value in argument to NewSongHandler
+     internal/handlers/songs_test.go:210:41: cannot use mockRepo (variable of type *MockSongRepository) as repositories.SongRepository 
+     value in argument to NewSongHandler: *MockSongRepository does not implement repositories.SongRepository (wrong type for method Count)
+     		have Count(interface{}) (int64, error)
+     		want Count(context.Context) (int64, error)
+     internal/handlers/songs_test.go:233:28: cannot use mockService (variable of type *MockSongResolutionService) as 
+     *services.SongResolutionService value in argument to NewSongHandler
+     … +15 lines (ctrl+r to see all)
+
+⏺ The tests are failing due to interface mismatches, but those are unrelated to my template changes. Let me test by building the
+  application:
+
+⏺ Bash(go build ./cmd/server)
+  ⎿  Error: # songshare/internal/handlers
+     internal/handlers/songs.go:8:2: "html/template" imported and not used
+
+⏺ Good catch! Let me remove the unused import:
+
+⏺ Update(internal/handlers/songs.go)
+  ⎿  Updated internal/handlers/songs.go with 1 removal
+        5      "crypto/rand"
+        6      "encoding/hex"
+        7      "fmt"
+        8 -    "html/template"
+        8      "log/slog"
+        9      "net/http"
+       10      "net/url"
+
+⏺ Bash(go build ./cmd/server)
+  ⎿  (No content)
+
+⏺ Great! The build succeeds. Let me check how many lines I've removed from songs.go:
+
+⏺ Bash(wc -l ./internal/handlers/songs.go)
+  ⎿      1530 ./internal/handlers/songs.go
+
+⏺ Excellent! We've reduced the file from 1,925 lines to 1,530 lines - a reduction of 395 lines (about 20%).
+
+  Let me mark Phase 1 as completed and move to Phase 2:
+
+⏺ Update Todos
+  ⎿  ☒ Phase 1: Extract HTML templates from songs.go into internal/templates/ 
+     ☐ Phase 2: Extract HTTP response rendering into internal/handlers/render/
+     ☐ Phase 3: Extract search logic into internal/search/
+     ☐ Phase 4: Extract common service patterns into internal/services/common/
+     ☐ Phase 5: Split large test files for better organization
+
+⏺ Now let's move to Phase 2: Extract HTTP response rendering. First, let me create the render package:
+
+⏺ Bash(mkdir -p ./internal/handlers/render)
+  ⎿  (No content)
+
+⏺ Now let me examine the rendering functions to extract:
+
+⏺ Bash(grep -n "func.*render\|func.*HTML" ./internal/handlers/songs.go)
+  ⎿  281:func (h *SongHandler) renderSongJSON(c *gin.Context, song *models.Song) {               
+     322:func (h *SongHandler) renderSongPage(c *gin.Context, song *models.Song) {
+     746:func (h *SongHandler) renderSearchResultsHTML(results []SearchResultWithSource) string {
+     … +1 line (ctrl+r to expand)
+
+⏺ Let me examine these functions to understand what needs to be extracted. First, let me look at the JSON renderer:
+
+⏺ Read(internal/handlers/songs.go)
+  ⎿  Read 40 lines (ctrl+r to expand)
+
+⏺ Let me examine the HTML rendering functions:
+
+⏺ Read(internal/handlers/songs.go)
+  ⎿  Read 50 lines (ctrl+r to expand)
+
+⏺ Let me create the render package with response utilities:
+
+⏺ Write(internal/handlers/render/response.go)
+  ⎿  Wrote 195 lines to internal/handlers/render/response.go
+     package render
+     import (
+       "fmt"
+       "net/http"
+       "strings"
+       "github.com/gin-gonic/gin"
+       "songshare/internal/models"
+       "songshare/internal/templates"
+     … +185 lines (ctrl+r to expand)
+
+⏺ Now let me create the HTML rendering utilities:
+
+⏺ Write(internal/handlers/render/html.go)
+  ⎿  Wrote 214 lines to internal/handlers/render/html.go                    
+     package render
+     import (
+       "fmt"
+       "strings"
+     )
+     // RenderSearchResultsHTML generates HTML for search results
+     func RenderSearchResultsHTML(results []SearchResultWithSource) string {
+       if len(results) == 0 {
+     … +204 lines (ctrl+r to expand)
+
+⏺ Now I need to update the songs.go handler to use these new rendering utilities. Let me first read the current renderSongJSON function to
+   see how to replace it:
+
+⏺ Update(internal/handlers/songs.go)
+  ⎿  Updated internal/handlers/songs.go with 1 addition and 1 removal                          
+       14      "time"
+       15    
+       16      "github.com/gin-gonic/gin"
+       17 +    "songshare/internal/handlers/render"
+       18      "songshare/internal/models"
+       19      "songshare/internal/repositories"
+       20      "songshare/internal/scoring"
+       21      "songshare/internal/services"
+       22 -    "songshare/internal/templates"
+       22    )
+       23    
+       24    // ResolveSongRequest represents the request to resolve a song from a platform URL
+
+⏺ Now I need to add a renderer to the SongHandler:
+
+⏺ Read(internal/handlers/songs.go)
+  ⎿  Read 20 lines (ctrl+r to expand)
+
+⏺ Now I'll update the SongHandler to include a renderer:
+
+⏺ Update(internal/handlers/songs.go)
+  ⎿  Updated internal/handlers/songs.go with 2 additions             
+       90      songRepository    repositories.SongRepository
+       91      baseURL           string
+       92      scorer            *scoring.RelevanceScorer
+       93 +    renderer          *render.SongRenderer
+       94    }
+       95    
+       96    // NewSongHandler creates a new song handler
+     ...
+        99        songRepository:    songRepository,
+       100        baseURL:           baseURL,
+       101        scorer:            scoring.NewRelevanceScorer(),
+       102 +      renderer:          render.NewSongRenderer(baseURL),
+       103      }
+       104    }
+       105    
+
+⏺ Now let me need to move the response types to the handler first, and then replace the functions. Let me check what types need to be
+  moved:
+
+⏺ Read(internal/handlers/songs.go)
+  ⎿  Read 60 lines (ctrl+r to expand)
+
+⏺ I need to remove the duplicate types from the handler since they're now in the render package. Let me do that:
+
+⏺ Update(internal/handlers/songs.go)
+  ⎿  Updated internal/handlers/songs.go with 25 removals                                         
+       26      URL string `json:"url" binding:"required"`
+       27    }
+       28    
+       29 -  // ResolveSongResponse represents the response with song metadata and platform links
+       30 -  type ResolveSongResponse struct {
+       31 -    Song          SongMetadata            `json:"song"`
+       32 -    Platforms     map[string]PlatformLink `json:"platforms"`
+       33 -    UniversalLink string                  `json:"universal_link"`
+       34 -  }
+       29    
+       30 -  // SongMetadata represents core song information
+       31 -  type SongMetadata struct {
+       32 -    ID          string   `json:"id"`
+       33 -    Title       string   `json:"title"`
+       34 -    Artists     []string `json:"artists"`
+       35 -    Album       string   `json:"album"`
+       36 -    DurationMs  int      `json:"duration_ms"`
+       37 -    ReleaseDate string   `json:"release_date"`
+       38 -    ISRC        string   `json:"isrc,omitempty"`
+       39 -    ImageURL    string   `json:"image_url,omitempty"`
+       40 -  }
+       41 -  
+       42 -  // PlatformLink represents a link to a song on a specific platform
+       43 -  type PlatformLink struct {
+       44 -    URL       string `json:"url"`
+       45 -    Available bool   `json:"available"`
+       46 -    Platform  string `json:"platform"`
+       47 -  }
+       48 -  
+       30    // SearchSongsRequest represents the request to search for songs
+       31    type SearchSongsRequest struct {
+       32      Title    string `json:"title,omitempty"`
+
+⏺ Let me also remove the SearchResult type since it's now duplicated:
+
+⏺ Update(internal/handlers/songs.go)
+  ⎿  Updated internal/handlers/songs.go with 2 additions and 18 removals                                     
+       39    
+       40    // SearchSongsResponse represents the response for search results
+       41    type SearchSongsResponse struct {
+       42 -    Results map[string][]SearchResult `json:"results"` // platform -> results
+       43 -    Query   SearchSongsRequest        `json:"query"`   // Echo back the query for reference
+       42 +    Results map[string][]render.SearchResult `json:"results"` // platform -> results
+       43 +    Query   SearchSongsRequest               `json:"query"`   // Echo back the query for reference
+       44    }
+       45    
+       46 -  // SearchResult represents a single search result
+       47 -  type SearchResult struct {
+       48 -    Title       string   `json:"title"`
+       49 -    Artists     []string `json:"artists"`
+       50 -    Album       string   `json:"album"`
+       51 -    URL         string   `json:"url"`
+       52 -    Platform    string   `json:"platform"`
+       53 -    ISRC        string   `json:"isrc,omitempty"`
+       54 -    DurationMs  int      `json:"duration_ms,omitempty"`
+       55 -    ReleaseDate string   `json:"release_date,omitempty"`
+       56 -    ImageURL    string   `json:"image_url,omitempty"`
+       57 -    Popularity  int      `json:"popularity,omitempty"` // 0-100, higher = more popular
+       58 -    Explicit    bool     `json:"explicit,omitempty"`   // True if this version is explicit
+       59 -    Available   bool     `json:"available"`
+       60 -  }
+       61 -  
+       46    // SongHandler handles song-related requests
+       47    type SongHandler struct {
+       48      resolutionService *services.SongResolutionService
+
+⏺ Now let me find and replace the rendering functions. First, let me find the renderSongJSON function:
+
+⏺ Bash(grep -n "func.*renderSongJSON" ./internal/handlers/songs.go)
+  ⎿  242:func (h *SongHandler) renderSongJSON(c *gin.Context, song *models.Song) {
+
+⏺ Read(internal/handlers/songs.go)
+  ⎿  Read 30 lines (ctrl+r to expand)
+
+⏺ Now let me replace the renderSongJSON function:
+
+⏺ Update(internal/handlers/songs.go)
+  ⎿  Updated internal/handlers/songs.go with 1 addition and 25 removals                       
+       240    
+       241    // renderSongJSON returns JSON response for the song
+       242    func (h *SongHandler) renderSongJSON(c *gin.Context, song *models.Song) {
+       243 -    response := ResolveSongResponse{
+       244 -      Song: SongMetadata{
+       245 -        ID:          song.ID.Hex(),
+       246 -        Title:       song.Title,
+       247 -        Artists:     []string{song.Artist}, // TODO: Parse comma-separated artists
+       248 -        Album:       song.Album,
+       249 -        DurationMs:  song.Metadata.Duration,
+       250 -        ReleaseDate: song.Metadata.ReleaseDate.Format("2006-01-02"),
+       251 -        ISRC:        song.ISRC,
+       252 -        ImageURL:    song.Metadata.ImageURL,
+       253 -      },
+       254 -      Platforms:     make(map[string]PlatformLink),
+       255 -      UniversalLink: h.buildUniversalLink(song),
+       256 -    }
+       257 -  
+       258 -    // Add platform links
+       259 -    for _, link := range song.PlatformLinks {
+       260 -      response.Platforms[link.Platform] = PlatformLink{
+       261 -        URL:       link.URL,
+       262 -        Available: link.Available,
+       263 -        Platform:  link.Platform,
+       264 -      }
+       265 -    }
+       266 -  
+       267 -    c.JSON(http.StatusOK, response)
+       243 +    h.renderer.RenderSongJSON(c, song)
+       244    }
+       245    
+       246    // PlatformDisplayData contains platform information for templates
+
+⏺ Now I need to find and replace the renderSongPage function:
+
+⏺ Bash(grep -n "func.*renderSongPage" ./internal/handlers/songs.go)
+  ⎿  259:func (h *SongHandler) renderSongPage(c *gin.Context, song *models.Song) {
+
+⏺ Let me read that function:
+
+⏺ Read(internal/handlers/songs.go)
+  ⎿  Read 50 lines (ctrl+r to expand)
+
+⏺ I need to replace this function, but first I need to make sure the PlatformDisplayData type and GetPlatformUIConfig function exist. Let
+  me find GetPlatformUIConfig:
+
+⏺ Bash(grep -n "GetPlatformUIConfig\|func.*GetPlatformUIConfig" ./internal/handlers/*.go)
+  ⎿  ./internal/handlers/platform_ui_test.go:9:func TestGetPlatformUIConfig(t *testing.T) {      
+     ./internal/handlers/platform_ui_test.go:58:			config := GetPlatformUIConfig(tt.platform)
+     ./internal/handlers/platform_ui_test.go:84:	retrieved := GetPlatformUIConfig("test_platform")
+     … +9 lines (ctrl+r to expand)
+
+⏺ Good, it exists in platform_ui.go. Let me check what that function returns:
+
+⏺ Read(internal/handlers/platform_ui.go)
+  ⎿  Read 15 lines (ctrl+r to expand)
+
+⏺ Now I need to check the PlatformUIConfig type:
+
+⏺ Bash(grep -n "type.*PlatformUIConfig" ./internal/handlers/platform_ui.go)
+  ⎿  9:type PlatformUIConfig struct {
+
+⏺ Read(internal/handlers/platform_ui.go)
+  ⎿  Read 15 lines (ctrl+r to expand)
+
+⏺ I notice there's a mismatch: the render package expects CSSClass but the platform_ui returns BadgeClass. Let me update my renderer
+  function to use the correct field name. First, let me update the render package:
+
+⏺ Update(internal/handlers/render/response.go)
+  ⎿  Updated internal/handlers/render/response.go with 2 additions and 2 removals                                                         
+       117      c.JSON(http.StatusOK, response)
+       118    }
+       119    
+       120 -  // RenderSongPage renders a song as HTML page
+       121 -  func (r *SongRenderer) RenderSongPage(c *gin.Context, song *models.Song, getPlatformUIConfig func(string) PlatformUIConfig) 
+     {
+       120 +  // RenderSongPage renders a song as HTML page  
+       121 +  func (r *SongRenderer) RenderSongPage(c *gin.Context, song *models.Song, getPlatformUIConfig func(string) *PlatformUIConfig) 
+     {
+           + {
+       122      // Create template data
+       123      data := struct {
+       124        Song         *models.Song
+
+⏺ Now let me fix the field name in the render function:
+
+⏺ Update(internal/handlers/render/response.go)
+  ⎿  Updated internal/handlers/render/response.go with 1 addition and 1 removal
+       147            ButtonText:  uiConfig.ButtonText,
+       148            Description: uiConfig.Description,
+       149            Color:       uiConfig.Color,
+       150 -          CSSClass:    uiConfig.CSSClass,
+       150 +          CSSClass:    uiConfig.BadgeClass,
+       151          })
+       152        }
+       153      }
+
+⏺ I also need to update the PlatformUIConfig type definition in the render package:
+
+⏺ Update(internal/handlers/render/response.go)
+  ⎿  Updated internal/handlers/render/response.go with 1 addition and 1 removal
+       191      ButtonText  string
+       192      Description string
+       193      Color       string
+       194 -    CSSClass    string
+       194 +    BadgeClass  string
+       195    }
+       196   \ No newline at end of file
+
+⏺ Now I can replace the renderSongPage function:
+
+⏺ Update(internal/handlers/songs.go)
+  ⎿  Updated internal/handlers/songs.go with 1 addition and 46 removals                                    
+       257    
+       258    // renderSongPage returns HTML page with HTMX support
+       259    func (h *SongHandler) renderSongPage(c *gin.Context, song *models.Song) {
+       260 -    // Create template data
+       261 -    data := struct {
+       262 -      Song         *models.Song
+       263 -      PlatformURLs map[string]string
+       264 -      Platforms    []PlatformDisplayData
+       265 -      AlbumArt     string
+       266 -    }{
+       267 -      Song:         song,
+       268 -      PlatformURLs: make(map[string]string),
+       269 -      Platforms:    []PlatformDisplayData{},
+       270 -      AlbumArt:     song.Metadata.ImageURL,
+       271 -    }
+       272 -  
+       273 -    // Extract platform URLs and create platform display data
+       274 -    for _, link := range song.PlatformLinks {
+       275 -      if link.Available {
+       276 -        data.PlatformURLs[link.Platform] = link.URL
+       277 -  
+       278 -        // Get UI configuration for this platform
+       279 -        uiConfig := GetPlatformUIConfig(link.Platform)
+       280 -        data.Platforms = append(data.Platforms, PlatformDisplayData{
+       281 -          Platform:    link.Platform,
+       282 -          URL:         link.URL,
+       283 -          Name:        uiConfig.Name,
+       284 -          IconURL:     uiConfig.IconURL,
+       285 -          ButtonText:  uiConfig.ButtonText,
+       286 -          Description: uiConfig.Description,
+       287 -          Color:       uiConfig.Color,
+       288 -          CSSClass:    uiConfig.BadgeClass,
+       289 -        })
+       290 -      }
+       291 -    }
+       292 -  
+       293 -    // HTML template with HTMX support
+       294 -    tmpl, err := templates.GetTemplate("song_page")
+       295 -    if err != nil {
+       296 -      slog.Error("Failed to parse song template", "error", err)
+       297 -      c.JSON(http.StatusInternalServerError, gin.H{"error": "Template error"})
+       298 -      return
+       299 -    }
+       300 -  
+       301 -    c.Header("Content-Type", "text/html; charset=utf-8")
+       302 -    if err := tmpl.Execute(c.Writer, data); err != nil {
+       303 -      slog.Error("Failed to execute song template", "error", err)
+       304 -      c.JSON(http.StatusInternalServerError, gin.H{"error": "Render error"})
+       305 -    }
+       260 +    h.renderer.RenderSongPage(c, song, GetPlatformUIConfig)
+       261    }
+       262    
+       263    // RedirectToSong handles GET /api/v1/s/:id - universal link redirects with dual-mode support
+
+⏺ Let me also remove the now unused PlatformDisplayData type from the handler:
+
+⏺ Update(internal/handlers/songs.go)
+  ⎿  Updated internal/handlers/songs.go with 11 removals                               
+       243      h.renderer.RenderSongJSON(c, song)
+       244    }
+       245    
+       246 -  // PlatformDisplayData contains platform information for templates
+       247 -  type PlatformDisplayData struct {
+       248 -    Platform    string
+       249 -    URL         string
+       250 -    Name        string
+       251 -    IconURL     string
+       252 -    ButtonText  string
+       253 -    Description string
+       254 -    Color       string
+       255 -    CSSClass    string
+       256 -  }
+       246    
+       247    // renderSongPage returns HTML page with HTMX support
+       248    func (h *SongHandler) renderSongPage(c *gin.Context, song *models.Song) {
+
+⏺ Now let me find the SearchPage function and replace it:
+
+⏺ Bash(grep -n "func.*SearchPage" ./internal/handlers/songs.go)
+  ⎿  365:func (h *SongHandler) SearchPage(c *gin.Context) {
+
+⏺ Read(internal/handlers/songs.go)
+  ⎿  Read 30 lines (ctrl+r to expand)
+
+⏺ Read(internal/handlers/songs.go)
+  ⎿  Read 10 lines (ctrl+r to expand)
+
+⏺ Let me replace the SearchPage function:
+
+⏺ Update(internal/handlers/songs.go)
+  ⎿  Updated internal/handlers/songs.go with 1 addition and 19 removals                     
+       376        }
+       377      }
+       378    
+       379 -    // Create template data
+       380 -    data := struct {
+       381 -      Query string
+       382 -    }{
+       383 -      Query: query,
+       384 -    }
+       385 -  
+       386 -    tmpl, err := templates.GetTemplate("search_page")
+       387 -    if err != nil {
+       388 -      slog.Error("Failed to parse search template", "error", err)
+       389 -      c.JSON(http.StatusInternalServerError, gin.H{"error": "Template error"})
+       390 -      return
+       391 -    }
+       392 -  
+       393 -    c.Header("Content-Type", "text/html; charset=utf-8")
+       394 -    if err := tmpl.Execute(c.Writer, data); err != nil {
+       395 -      slog.Error("Failed to execute search template", "error", err)
+       396 -      c.JSON(http.StatusInternalServerError, gin.H{"error": "Render error"})
+       397 -    }
+       379 +    h.renderer.RenderSearchPage(c, query)
+       380    }
+       381    
+       382    // SearchResults handles GET /api/v1/search/results and returns HTML fragments
+
+⏺ Now let me check the line count again:
+
+⏺ Bash(wc -l ./internal/handlers/songs.go)
+  ⎿      1393 ./internal/handlers/songs.go
+
+⏺ Great! We've reduced the file from 1,530 to 1,393 lines - another 137 lines saved (about 9% reduction).
+
+  Let me test the build:
+
+⏺ Bash(go build ./cmd/server)
+  ⎿  Error: # songshare/internal/handlers/render
+     internal/handlers/render/response.go:6:2: "strings" imported and not used
+     internal/handlers/render/response.go:88:48: song.ShortID undefined (type *models.Song has no field or method ShortID)
+
+⏺ I need to fix these issues. First, let me check what the correct field name is for ShortID:
+
+⏺ Bash(grep -n "buildUniversalLink\|ShortID\|shortid" ./internal/handlers/songs.go)
+  ⎿  108:		UniversalLink: h.buildUniversalLink(song), // ISRC-based universal lin
+     527:				URL:         h.buildUniversalLink(song),
+     1179:// buildUniversalLink creates a universal link for a song using ISRC
+     … +1 line (ctrl+r to expand)
+
+⏺ Read(internal/handlers/songs.go)
+  ⎿  Read 15 lines (ctrl+r to expand)
+
+⏺ I see, it uses ISRC, not ShortID. Let me fix the render package:
+
+⏺ Update(internal/handlers/render/response.go)
+  ⎿  Updated internal/handlers/render/response.go with 1 addition and 1 removal
+       2    
+       3    import (
+       4      "fmt"
+       5 +    "log/slog"
+       6      "net/http"
+       7 -    "strings"
+       7    
+       8      "github.com/gin-gonic/gin"
+       9      "songshare/internal/models"
+
+⏺ Update(internal/handlers/render/response.go)
+  ⎿  Updated internal/handlers/render/response.go with 6 additions and 1 removal             
+       85    
+       86    // buildUniversalLink builds the universal link for a song
+       87    func (r *SongRenderer) buildUniversalLink(song *models.Song) string {
+       88 -    return fmt.Sprintf("%s/s/%s", r.baseURL, song.ShortID)
+       88 +    if song.ISRC == "" {
+       89 +      slog.Warn("Song missing ISRC", "songID", song.ID.Hex(), "title", song.Title)
+       90 +      // This shouldn't happen with properly indexed songs
+       91 +      return fmt.Sprintf("%s/s/unknown", r.baseURL)
+       92 +    }
+       93 +    return fmt.Sprintf("%s/s/%s", r.baseURL, song.ISRC)
+       94    }
+       95    
+       96    // RenderSongJSON renders a song as JSON response
+
+⏺ Now let me test the build again:
+
+⏺ Bash(go build ./cmd/server)
+  ⎿  Error: # songshare/internal/handlers
+     internal/handlers/songs.go:96:14: undefined: ResolveSongResponse
+     internal/handlers/songs.go:97:9: undefined: SongMetadata
+     internal/handlers/songs.go:453:15: undefined: SearchResult
+     internal/handlers/songs.go:491:89: undefined: SearchResult
+     internal/handlers/songs.go:545:111: undefined: SearchResult
+     internal/handlers/songs.go:868:46: undefined: SearchResult
+     internal/handlers/songs.go:907:59: undefined: SearchResult
+     internal/handlers/songs.go:1037:68: undefined: SearchResult
+     internal/handlers/songs.go:1132:55: undefined: SearchResult
+     … +2 lines (ctrl+r to see all)
+
+⏺ I need to fix the type references in the handlers. Let me update them to use the render package types:
+
+⏺ Update(internal/handlers/songs.go)
+  ⎿  Updated internal/handlers/songs.go with 2 additions and 2 removals                       
+        93      }
+        94    
+        95      // Convert to response format
+        96 -    response := ResolveSongResponse{
+        97 -      Song: SongMetadata{
+        96 +    response := render.ResolveSongResponse{
+        97 +      Song: render.SongMetadata{
+        98          ID:          song.ID.Hex(),
+        99          Title:       song.Title,
+       100          Artists:     []string{song.Artist}, // TODO: Parse comma-separated artists
+
+⏺ I need to replace all the SearchResult references too. Let me do this systematically:
+
+⏺ Update(internal/handlers/songs.go)
+  ⎿  Updated internal/handlers/songs.go with 1 addition and 1 removal                     
+       104          ISRC:        song.ISRC,
+       105          ImageURL:    song.Metadata.ImageURL,
+       106        },
+       107 -      Platforms:     make(map[string]PlatformLink),
+       107 +      Platforms:     make(map[string]render.PlatformLink),
+       108        UniversalLink: h.buildUniversalLink(song), // ISRC-based universal links
+       109      }
+       110    
+
+⏺ Update(internal/handlers/songs.go)
+  ⎿  Updated internal/handlers/songs.go with 1 addition and 1 removal     
+       110    
+       111      // Add platform links
+       112      for _, link := range song.PlatformLinks {
+       113 -      response.Platforms[link.Platform] = PlatformLink{
+       113 +      response.Platforms[link.Platform] = render.PlatformLink{
+       114          URL:       link.URL,
+       115          Available: link.Available,
+       116          Platform:  link.Platform,
+
+⏺ Now let me find and replace all SearchResult references:
+
+⏺ Bash(sed -i 's/\[\]SearchResult/\[\]render\.SearchResult/g' ./internal/handlers/songs.go)
+  ⎿  Error: sed: 1: "./internal/handlers/son ...": invalid command code .
+
+⏺ Let me use a different approach:
+
+⏺ Bash(grep -n "SearchResult" ./internal/handlers/songs.go | head -5)
+  ⎿  42:	Results map[string][]render.SearchResult `json:"results"` // platform -> result
+     170:		Results: make(map[string][]SearchResult),
+     213:			response.Results[platform] = []SearchResult{}
+     … +2 lines (ctrl+r to expand)
+
+⏺ Let me replace these one by one:
+
+⏺ Update(internal/handlers/songs.go)
+  ⎿  Updated internal/handlers/songs.go with 1 addition and 1 removal
+       167      }
+       168    
+       169      response := SearchSongsResponse{
+       170 -      Results: make(map[string][]SearchResult),
+       170 +      Results: make(map[string][]render.SearchResult),
+       171        Query:   req,
+       172      }
+       173    
+
+⏺ Update(internal/handlers/songs.go)
+  ⎿  Updated internal/handlers/songs.go with 1 addition and 1 removal                           
+       210        if err != nil {
+       211          slog.Error("Search failed for platform", "platform", platform, "error", err)
+       212          // Continue with other platforms instead of failing entirely
+       213 -        response.Results[platform] = []SearchResult{}
+       213 +        response.Results[platform] = []render.SearchResult{}
+       214          continue
+       215        }
+       216    
+
+⏺ Update(internal/handlers/songs.go)
+  ⎿  Updated internal/handlers/songs.go with 2 additions and 2 removals
+       215        }
+       216    
+       217        // Convert tracks to search results
+       218 -      results := make([]SearchResult, len(tracks))
+       218 +      results := make([]render.SearchResult, len(tracks))
+       219        for i, track := range tracks {
+       220 -        results[i] = SearchResult{
+       220 +        results[i] = render.SearchResult{
+       221            Title:       track.Title,
+       222            Artists:     track.Artists,
+       223            Album:       track.Album,
+
+⏺ Let me continue finding other SearchResult references:
+
+⏺ Bash(grep -n "SearchResult" ./internal/handlers/songs.go)
+  ⎿  42:	Results map[string][]render.SearchResult `json:"results"` // platform -> result
+     170:		Results: make(map[string][]render.SearchResult),
+     213:			response.Results[platform] = []render.SearchResult{}
+     … +58 lines (ctrl+r to expand)
+
+⏺ I need to continue replacing SearchResult references. Let me work on the SearchResultWithSource type:
+
+⏺ Update(internal/handlers/songs.go)
+  ⎿  Error editing file
+
+⏺ Let me find the exact text:
+
+⏺ Read(internal/handlers/songs.go)
+  ⎿  Read 10 lines (ctrl+r to expand)
+
+⏺ Update(internal/handlers/songs.go)
+  ⎿  Updated internal/handlers/songs.go with 1 addition and 1 removal              
+       450    
+       451    // SearchResultWithSource combines search result with its source type
+       452    type SearchResultWithSource struct {
+       453 -    SearchResult SearchResult
+       453 +    SearchResult render.SearchResult
+       454      Source       string // "local" or "platform"
+       455    }
+       456    
+
+⏺ I have too many individual SearchResult references to fix manually. Let me move the SearchResultWithSource and GroupedSearchResult types
+   to the render package and fix the references more systematically. First, let me add these types to the render package:
+
+⏺ Update(internal/handlers/render/html.go)
+  ⎿  Error editing file
+
+⏺ Let me check what's in the html.go file:
+
+⏺ Read(internal/handlers/render/html.go)
+  ⎿  Read 15 lines (ctrl+r to expand)
+
+⏺ Let me add the SearchResultWithSource type to the html.go file:
+
+⏺ Update(internal/handlers/render/html.go)
+  ⎿  Updated internal/handlers/render/html.go with 6 additions                          
+        5      "strings"
+        6    )
+        7    
+        8 +  // SearchResultWithSource pairs a search result with its source information
+        9 +  type SearchResultWithSource struct {
+       10 +    SearchResult SearchResult
+       11 +    Source       string // "local" or "platform"
+       12 +  }
+       13 +  
+       14    // RenderSearchResultsHTML generates HTML for search results
+       15    func RenderSearchResultsHTML(results []SearchResultWithSource) string {
+       16      if len(results) == 0 {
+
+⏺ Now let me remove the SearchResultWithSource type from the handler and update all references:
+
+⏺ Update(internal/handlers/songs.go)
+  ⎿  Updated internal/handlers/songs.go with 5 removals                            
+       448      c.String(http.StatusOK, html)
+       449    }
+       450    
+       451 -  // SearchResultWithSource combines search result with its source type
+       452 -  type SearchResultWithSource struct {
+       453 -    SearchResult render.SearchResult
+       454 -    Source       string // "local" or "platform"
+       455 -  }
+       451    
+       452    // GroupedSearchResult represents a song with multiple platform links
+       453    type GroupedSearchResult struct {
+
+⏺ Now let me systematically replace the remaining SearchResult and SearchResultWithSource references:
+
+⏺ Bash(perl -i -pe 's/\bSearchResultWithSource\b/render.SearchResultWithSource/g' ./internal/handlers/songs.go)
+  ⎿  (No content)
+
+⏺ I see there's an issue with the conversion function. Let me fix that:
+
+⏺ Update(internal/handlers/songs.go)
+  ⎿  Updated internal/handlers/songs.go with 3 additions and 3 removals                                                               
+       918    }
+       919    
+       920    // convertToScoringSearchResultsWithSource converts handler render.SearchResultWithSource slice to scoring package slice
+       921 -  func (h *SongHandler) convertToScoringSearchResultsWithSource(results []render.SearchResultWithSource) 
+     []scoring.render.SearchResultWithSource {
+           - []scoring.render.SearchResultWithSource {
+       922 -    scoringResults := make([]scoring.render.SearchResultWithSource, len(results))
+       921 +  func (h *SongHandler) convertToScoringSearchResultsWithSource(results []render.SearchResultWithSource) 
+     []scoring.SearchResultWithSource {
+           + []scoring.SearchResultWithSource {
+       922 +    scoringResults := make([]scoring.SearchResultWithSource, len(results))
+       923      for i, result := range results {
+       924 -      scoringResults[i] = scoring.render.SearchResultWithSource{
+       924 +      scoringResults[i] = scoring.SearchResultWithSource{
+       925          SearchResult: h.convertToScoringSearchResult(result.SearchResult),
+       926          Source:       result.Source,
+       927        }
+
+⏺ Now let me replace the remaining SearchResult function parameter references:
+
+⏺ Bash(perl -i -pe 's/\[\]SearchResult([,\)])/[]render.SearchResult$1/g' ./internal/handlers/songs.go)
+  ⎿  No (tell Claude what to do differently)
+

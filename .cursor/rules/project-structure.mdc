@@ -1,0 +1,46 @@
+---
+alwaysApply: true
+---
+## Project structure and where things live
+
+- **HTTP layer**: Handlers live in [internal/handlers/](mdc:internal/handlers/) including UI endpoints like [platform_ui.go](mdc:internal/handlers/platform_ui.go) and song endpoints in [songs.go](mdc:internal/handlers/songs.go). Response helpers are in [render/](mdc:internal/handlers/render/) such as [response.go](mdc:internal/handlers/render/response.go) and [html.go](mdc:internal/handlers/render/html.go).
+
+- **Templates**: HTML templates are under [internal/templates/](mdc:internal/templates/) with entries like [search_page.html](mdc:internal/templates/search_page.html), [song_page.html](mdc:internal/templates/song_page.html), and go helpers in [templates.go](mdc:internal/templates/templates.go).
+
+- **Domain models and DB**: Data structures and DB wiring are in [internal/models/](mdc:internal/models/), e.g., [song.go](mdc:internal/models/song.go) and DB setup in [database.go](mdc:internal/models/database.go).
+
+- **Repositories**: Data access interfaces and implementations live in [internal/repositories/](mdc:internal/repositories/), including the main repository contract [song_repository.go](mdc:internal/repositories/song_repository.go), Mongo implementation [mongo_song_repository.go](mdc:internal/repositories/mongo_song_repository.go), and cached wrapper [cached_song_repository.go](mdc:internal/repositories/cached_song_repository.go).
+
+- **External platform services**: Integrations and orchestration under [internal/services/](mdc:internal/services/):
+  - Shared platform orchestration in [platform_service.go](mdc:internal/services/platform_service.go)
+  - Providers: [apple_music_service.go](mdc:internal/services/apple_music_service.go), [spotify_service.go](mdc:internal/services/spotify_service.go), and TIDAL ([tidal_service.go](mdc:internal/services/tidal_service.go), [tidal_models.go](mdc:internal/services/tidal_models.go))
+  - Resolution logic in [song_resolution_service.go](mdc:internal/services/song_resolution_service.go)
+
+- **Search subsystem**: Under [internal/search/](mdc:internal/search/) with major parts:
+  - Engine & coordination: [engine.go](mdc:internal/search/engine.go), [coordinator.go](mdc:internal/search/coordinator.go)
+  - Sources & platforms: [sources.go](mdc:internal/search/sources.go), [platforms.go](mdc:internal/search/platforms.go)
+  - Ranking & scoring: [ranking.go](mdc:internal/search/ranking.go), plus global scorer in [relevance_scorer.go](mdc:internal/scoring/relevance_scorer.go)
+  - Formatting & enhancement: [formatter.go](mdc:internal/search/formatter.go), [enhancement.go](mdc:internal/search/enhancement.go)
+  - Caching: [cache/](mdc:internal/search/cache/)
+
+- **Caching**: Cache interfaces and adapters in [internal/cache/](mdc:internal/cache/) including in-memory and Valkey-backed implementations like [valkey_cache.go](mdc:internal/cache/valkey_cache.go).
+
+- **Configuration**: App configuration and environment handling in [internal/config/](mdc:internal/config/) with the main entry [config.go](mdc:internal/config/config.go).
+
+- **CLI and utilities**: Jobs and one-offs under [cmd/](mdc:cmd/) such as album art backfill in [cmd/backfill-album-art/main.go](mdc:cmd/backfill-album-art/main.go).
+
+- **Testing utilities**: Shared helpers in [internal/testutil/](mdc:internal/testutil/) and service test scaffolding in [internal/testutil/servicetest/](mdc:internal/testutil/servicetest/). Example integration test in [test/integration/example_test.go](mdc:test/integration/example_test.go).
+
+- **Ops**: Docker setup ([docker-compose.yml](mdc:docker-compose.yml), [Dockerfile](mdc:Dockerfile)), monitoring docs ([monitoring/README.md](mdc:monitoring/README.md)), and DB maintenance ([reset-db.sh](mdc:reset-db.sh)).
+
+## Conventions
+
+- **Flow**: HTTP handler → service orchestration → repositories → DB; cross-cutting layers include caching and configuration. Prefer injecting interfaces from `internal/repositories` and `internal/cache` into services and handlers.
+- **Context**: Pass `context.Context` through all layers; never discard deadlines/cancelation.
+- **Errors**: Wrap with context; log at the edge (handlers/CLI), not deeply in libraries.
+
+## Adding features
+
+- New endpoint: add handler in [internal/handlers/](mdc:internal/handlers/), wire to services in [internal/services/](mdc:internal/services/), render with templates in [internal/templates/](mdc:internal/templates/).
+- New data source/platform: extend sources in [internal/search/sources.go](mdc:internal/search/sources.go) and/or services under [internal/services/](mdc:internal/services/); integrate ranking via [ranking.go](mdc:internal/search/ranking.go).
+- New data persistence: add a repository in [internal/repositories/](mdc:internal/repositories/) and implement the interface defined in [song_repository.go](mdc:internal/repositories/song_repository.go).

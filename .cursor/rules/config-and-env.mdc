@@ -1,0 +1,9 @@
+---
+globs: internal/config/*.go
+---
+## Configuration and environment
+
+- **Location**: Central config in [config.go](mdc:internal/config/config.go) with tests in [config_test.go](mdc:internal/config/config_test.go).
+- **Secrets/keys**: Provider credentials typically loaded via environment variables; reference repo keys at [keys/](mdc:keys/) when developing locally.
+- **Containers**: See [docker-compose.yml](mdc:docker-compose.yml) and [Dockerfile](mdc:Dockerfile) for service wiring and environment surfaces.
+- **Database maintenance**: Use [reset-db.sh](mdc:reset-db.sh) for local resets.

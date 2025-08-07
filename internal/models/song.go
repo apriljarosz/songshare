@@ -11,20 +11,20 @@ const CurrentSchemaVersion = 1
 // Song represents a song with metadata and platform links
 type Song struct {
 	ID            primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	SchemaVersion int               `bson:"schema_version" json:"schema_version"`
-	
+	SchemaVersion int                `bson:"schema_version" json:"schema_version"`
+
 	// Core Identifiers
-	ISRC   string `bson:"isrc" json:"isrc"`                    // International Standard Recording Code
+	ISRC   string `bson:"isrc" json:"isrc"` // International Standard Recording Code
 	Title  string `bson:"title" json:"title"`
 	Artist string `bson:"artist" json:"artist"`
 	Album  string `bson:"album,omitempty" json:"album,omitempty"`
-	
+
 	// Platform Links (Embedded for Performance)
 	PlatformLinks []PlatformLink `bson:"platform_links" json:"platform_links"`
-	
+
 	// Additional Metadata
 	Metadata SongMetadata `bson:"metadata" json:"metadata"`
-	
+
 	// Timestamps
 	CreatedAt time.Time `bson:"created_at" json:"created_at"`
 	UpdatedAt time.Time `bson:"updated_at" json:"updated_at"`
@@ -42,13 +42,13 @@ type PlatformLink struct {
 
 // SongMetadata contains additional song information
 type SongMetadata struct {
-	Genre        []string  `bson:"genre,omitempty" json:"genre,omitempty"`
-	Duration     int       `bson:"duration_ms,omitempty" json:"duration_ms,omitempty"` // Duration in milliseconds
-	ReleaseDate  time.Time `bson:"release_date,omitempty" json:"release_date,omitempty"`
-	Language     string    `bson:"language,omitempty" json:"language,omitempty"`
-	Popularity   int       `bson:"popularity,omitempty" json:"popularity,omitempty"`   // Platform-specific popularity score
-	Explicit     bool      `bson:"explicit,omitempty" json:"explicit,omitempty"`
-	ImageURL     string    `bson:"image_url,omitempty" json:"image_url,omitempty"`     // Album art image URL
+	Genre       []string  `bson:"genre,omitempty" json:"genre,omitempty"`
+	Duration    int       `bson:"duration_ms,omitempty" json:"duration_ms,omitempty"` // Duration in milliseconds
+	ReleaseDate time.Time `bson:"release_date,omitempty" json:"release_date,omitempty"`
+	Language    string    `bson:"language,omitempty" json:"language,omitempty"`
+	Popularity  int       `bson:"popularity,omitempty" json:"popularity,omitempty"` // Platform-specific popularity score
+	Explicit    bool      `bson:"explicit,omitempty" json:"explicit,omitempty"`
+	ImageURL    string    `bson:"image_url,omitempty" json:"image_url,omitempty"` // Album art image URL
 }
 
 // NewSong creates a new Song with default values
@@ -67,7 +67,7 @@ func NewSong(title, artist string) *Song {
 // AddPlatformLink adds or updates a platform link for the song
 func (s *Song) AddPlatformLink(platform, externalID, url string, confidence float64) {
 	now := time.Now()
-	
+
 	// Check if platform link already exists
 	for i, link := range s.PlatformLinks {
 		if link.Platform == platform {
@@ -81,7 +81,7 @@ func (s *Song) AddPlatformLink(platform, externalID, url string, confidence floa
 			return
 		}
 	}
-	
+
 	// Add new platform link
 	s.PlatformLinks = append(s.PlatformLinks, PlatformLink{
 		Platform:     platform,

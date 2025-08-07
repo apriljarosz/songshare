@@ -13,11 +13,11 @@ import (
 
 func TestParsePlatformURL(t *testing.T) {
 	testCases := []struct {
-		name        string
-		url         string
+		name             string
+		url              string
 		expectedPlatform string
 		expectedTrackID  string
-		expectError     bool
+		expectError      bool
 	}{
 		{
 			name:             "Spotify URL with https",
@@ -110,7 +110,7 @@ func TestParsePlatformURL(t *testing.T) {
 				assert.Error(t, err)
 				assert.Equal(t, "", platform)
 				assert.Equal(t, "", trackID)
-				
+
 				// Verify error type
 				var platformError *PlatformError
 				assert.ErrorAs(t, err, &platformError)
@@ -164,7 +164,7 @@ func TestSpotifyURLPattern(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			matches := SpotifyURLPattern.Regex.FindStringSubmatch(tc.url)
-			
+
 			if tc.shouldMatch {
 				require.NotEmpty(t, matches, "Expected URL to match Spotify pattern")
 				require.Len(t, matches, 2, "Expected regex to capture track ID")
@@ -223,7 +223,7 @@ func TestAppleMusicURLPattern(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			matches := AppleMusicURLPattern.Regex.FindStringSubmatch(tc.url)
-			
+
 			if tc.shouldMatch {
 				require.NotEmpty(t, matches, "Expected URL to match Apple Music pattern")
 				require.Len(t, matches, 2, "Expected regex to capture track ID")
@@ -243,10 +243,10 @@ func TestPlatformError(t *testing.T) {
 		URL:       "https://invalid.url",
 		Err:       assert.AnError,
 	}
-	
+
 	expectedMessage := "spotify parse_url failed: invalid URL format (URL: https://invalid.url) - assert.AnError general error for testing"
 	assert.Equal(t, expectedMessage, err.Error())
-	
+
 	// Test Unwrap
 	assert.Equal(t, assert.AnError, err.Unwrap())
 }
@@ -256,7 +256,7 @@ func TestPlatformError_MinimalFields(t *testing.T) {
 		Platform:  "apple_music",
 		Operation: "search",
 	}
-	
+
 	expectedMessage := "apple_music search failed"
 	assert.Equal(t, expectedMessage, err.Error())
 	assert.Nil(t, err.Unwrap())
@@ -280,15 +280,15 @@ func TestTrackInfo_ToSong(t *testing.T) {
 		ImageURL:    "https://example.com/album-art.jpg",
 		Available:   true,
 	}
-	
+
 	song := trackInfo.ToSong()
-	
+
 	// Verify basic song properties
 	assert.Equal(t, "Bohemian Rhapsody", song.Title)
 	assert.Equal(t, "Queen", song.Artist)
 	assert.Equal(t, "A Night at the Opera", song.Album)
 	assert.Equal(t, "GBUM71505078", song.ISRC)
-	
+
 	// Verify platform link was added
 	require.Len(t, song.PlatformLinks, 1)
 	platformLink := song.PlatformLinks[0]
@@ -297,14 +297,14 @@ func TestTrackInfo_ToSong(t *testing.T) {
 	assert.Equal(t, "https://open.spotify.com/track/4iV5W9uYEdYUVa79Axb7Rh", platformLink.URL)
 	assert.Equal(t, 1.0, platformLink.Confidence)
 	assert.True(t, platformLink.Available)
-	
+
 	// Verify metadata
 	assert.Equal(t, 355000, song.Metadata.Duration)
 	assert.Equal(t, []string{"Rock", "Progressive Rock"}, song.Metadata.Genre)
 	assert.False(t, song.Metadata.Explicit)
 	assert.Equal(t, 90, song.Metadata.Popularity)
 	assert.Equal(t, "https://example.com/album-art.jpg", song.Metadata.ImageURL)
-	
+
 	// Verify schema version and timestamps
 	assert.Equal(t, models.CurrentSchemaVersion, song.SchemaVersion)
 	assert.NotZero(t, song.CreatedAt)
@@ -320,9 +320,9 @@ func TestTrackInfo_ToSong_MultipleArtists(t *testing.T) {
 		Artists:    []string{"Artist One", "Artist Two", "Artist Three"},
 		Available:  true,
 	}
-	
+
 	song := trackInfo.ToSong()
-	
+
 	// Should join multiple artists with commas
 	assert.Equal(t, "Artist One, Artist Two, Artist Three", song.Artist)
 }
@@ -336,9 +336,9 @@ func TestTrackInfo_ToSong_EmptyFields(t *testing.T) {
 		Artists:    []string{"Solo Artist"},
 		Available:  true,
 	}
-	
+
 	song := trackInfo.ToSong()
-	
+
 	assert.Equal(t, "Minimal Song", song.Title)
 	assert.Equal(t, "Solo Artist", song.Artist)
 	assert.Empty(t, song.Album)
@@ -394,7 +394,7 @@ func TestSearchQuery_EmptyFields(t *testing.T) {
 	query := SearchQuery{
 		Limit: 10,
 	}
-	
+
 	assert.Empty(t, query.Title)
 	assert.Empty(t, query.Artist)
 	assert.Empty(t, query.Album)
@@ -405,7 +405,7 @@ func TestSearchQuery_EmptyFields(t *testing.T) {
 
 func TestTrackInfo_DefaultValues(t *testing.T) {
 	trackInfo := &TrackInfo{}
-	
+
 	assert.Empty(t, trackInfo.Platform)
 	assert.Empty(t, trackInfo.ExternalID)
 	assert.Empty(t, trackInfo.URL)
@@ -425,7 +425,7 @@ func TestTrackInfo_DefaultValues(t *testing.T) {
 // Benchmark tests for URL parsing performance
 func BenchmarkParsePlatformURL_Spotify(b *testing.B) {
 	url := "https://open.spotify.com/track/4iV5W9uYEdYUVa79Axb7Rh"
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _, _ = ParsePlatformURL(url)
@@ -434,7 +434,7 @@ func BenchmarkParsePlatformURL_Spotify(b *testing.B) {
 
 func BenchmarkParsePlatformURL_AppleMusic(b *testing.B) {
 	url := "https://music.apple.com/us/song/bohemian-rhapsody/1440857781"
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _, _ = ParsePlatformURL(url)
@@ -443,7 +443,7 @@ func BenchmarkParsePlatformURL_AppleMusic(b *testing.B) {
 
 func BenchmarkParsePlatformURL_Invalid(b *testing.B) {
 	url := "https://youtube.com/watch?v=fJ9rUzIMcZQ"
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _, _ = ParsePlatformURL(url)
@@ -713,7 +713,7 @@ func TestURLPatternRegistry_ThreadSafety(t *testing.T) {
 // Benchmark the enhanced URL pattern system
 func BenchmarkURLPatternRegistry_ParsePlatformURL(b *testing.B) {
 	url := "https://open.spotify.com/track/4iV5W9uYEdYUVa79Axb7Rh"
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _, _ = ParsePlatformURL(url)
@@ -722,7 +722,7 @@ func BenchmarkURLPatternRegistry_ParsePlatformURL(b *testing.B) {
 
 func BenchmarkURLPatternRegistry_RegisterPattern(b *testing.B) {
 	registry := &URLPatternRegistry{patterns: []URLPattern{}}
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		pattern := URLPattern{

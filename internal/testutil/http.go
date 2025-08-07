@@ -38,12 +38,12 @@ func (h *HTTPTestHelper) PostJSON(url string, payload interface{}) *httptest.Res
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(body))
 	require.NoError(h.t, err, "Failed to create HTTP request")
-	
+
 	req.Header.Set("Content-Type", "application/json")
-	
+
 	recorder := httptest.NewRecorder()
 	h.router.ServeHTTP(recorder, req)
-	
+
 	return recorder
 }
 
@@ -51,12 +51,12 @@ func (h *HTTPTestHelper) PostJSON(url string, payload interface{}) *httptest.Res
 func (h *HTTPTestHelper) GetJSON(url string) *httptest.ResponseRecorder {
 	req, err := http.NewRequest("GET", url, nil)
 	require.NoError(h.t, err, "Failed to create HTTP request")
-	
+
 	req.Header.Set("Accept", "application/json")
-	
+
 	recorder := httptest.NewRecorder()
 	h.router.ServeHTTP(recorder, req)
-	
+
 	return recorder
 }
 
@@ -64,12 +64,12 @@ func (h *HTTPTestHelper) GetJSON(url string) *httptest.ResponseRecorder {
 func (h *HTTPTestHelper) GetHTML(url string) *httptest.ResponseRecorder {
 	req, err := http.NewRequest("GET", url, nil)
 	require.NoError(h.t, err, "Failed to create HTTP request")
-	
+
 	req.Header.Set("Accept", "text/html")
-	
+
 	recorder := httptest.NewRecorder()
 	h.router.ServeHTTP(recorder, req)
-	
+
 	return recorder
 }
 
@@ -77,14 +77,14 @@ func (h *HTTPTestHelper) GetHTML(url string) *httptest.ResponseRecorder {
 func (h *HTTPTestHelper) GetWithHeaders(url string, headers map[string]string) *httptest.ResponseRecorder {
 	req, err := http.NewRequest("GET", url, nil)
 	require.NoError(h.t, err, "Failed to create HTTP request")
-	
+
 	for key, value := range headers {
 		req.Header.Set(key, value)
 	}
-	
+
 	recorder := httptest.NewRecorder()
 	h.router.ServeHTTP(recorder, req)
-	
+
 	return recorder
 }
 
@@ -92,7 +92,7 @@ func (h *HTTPTestHelper) GetWithHeaders(url string, headers map[string]string) *
 func (h *HTTPTestHelper) AssertJSONResponse(recorder *httptest.ResponseRecorder, expectedStatus int, target interface{}) {
 	require.Equal(h.t, expectedStatus, recorder.Code, "Unexpected status code")
 	require.Equal(h.t, "application/json; charset=utf-8", recorder.Header().Get("Content-Type"), "Expected JSON content type")
-	
+
 	err := json.Unmarshal(recorder.Body.Bytes(), target)
 	require.NoError(h.t, err, "Failed to unmarshal JSON response")
 }
@@ -101,18 +101,18 @@ func (h *HTTPTestHelper) AssertJSONResponse(recorder *httptest.ResponseRecorder,
 func (h *HTTPTestHelper) AssertHTMLResponse(recorder *httptest.ResponseRecorder, expectedStatus int) string {
 	require.Equal(h.t, expectedStatus, recorder.Code, "Unexpected status code")
 	require.Equal(h.t, "text/html; charset=utf-8", recorder.Header().Get("Content-Type"), "Expected HTML content type")
-	
+
 	return recorder.Body.String()
 }
 
 // AssertErrorResponse asserts that the response contains an error
 func (h *HTTPTestHelper) AssertErrorResponse(recorder *httptest.ResponseRecorder, expectedStatus int, expectedErrorSubstring string) {
 	require.Equal(h.t, expectedStatus, recorder.Code, "Unexpected status code")
-	
+
 	var errorResponse map[string]interface{}
 	err := json.Unmarshal(recorder.Body.Bytes(), &errorResponse)
 	require.NoError(h.t, err, "Failed to unmarshal error response")
-	
+
 	errorMessage, exists := errorResponse["error"]
 	require.True(h.t, exists, "Expected error field in response")
 	require.Contains(h.t, errorMessage, expectedErrorSubstring, "Error message should contain expected substring")
@@ -129,10 +129,10 @@ func NewMockHTTPServer() *MockHTTPServer {
 	mock := &MockHTTPServer{
 		handlers: make(map[string]http.HandlerFunc),
 	}
-	
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", mock.routeRequest)
-	
+
 	mock.server = httptest.NewServer(mux)
 	return mock
 }
@@ -158,7 +158,7 @@ func (m *MockHTTPServer) routeRequest(w http.ResponseWriter, r *http.Request) {
 		handler(w, r)
 		return
 	}
-	
+
 	// Default handler returns 404
 	http.NotFound(w, r)
 }
@@ -192,8 +192,8 @@ func SpotifyTrackResponse(trackID, title, artist string) map[string]interface{} 
 				},
 			},
 		},
-		"duration_ms": 240000,
-		"popularity":  75,
+		"duration_ms":       240000,
+		"popularity":        75,
 		"available_markets": []string{"US"},
 		"external_ids": map[string]string{
 			"isrc": TestISRC1,

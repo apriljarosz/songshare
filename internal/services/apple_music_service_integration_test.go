@@ -13,14 +13,14 @@ func TestAppleMusicServiceIntegration(t *testing.T) {
 	keyID := os.Getenv("TEST_APPLE_MUSIC_KEY_ID")
 	teamID := os.Getenv("TEST_APPLE_MUSIC_TEAM_ID")
 	keyFile := os.Getenv("TEST_APPLE_MUSIC_KEY_FILE")
-	
+
 	if keyID == "" || teamID == "" || keyFile == "" {
 		t.Log("Skipping Apple Music integration tests - TEST_APPLE_MUSIC_* credentials not set")
-		
+
 		// Run mock tests instead
 		cache := servicetest.CreateTestCache()
 		service := NewAppleMusicService("fake-key-id", "fake-team-id", "nonexistent-key.p8", cache)
-		
+
 		mockSuite := &servicetest.MockPlatformServiceTestSuite{
 			Service:      service,
 			PlatformName: "apple_music",
@@ -46,15 +46,15 @@ func TestAppleMusicServiceIntegration(t *testing.T) {
 				}...,
 			),
 		}
-		
+
 		mockSuite.RunMockTestSuite(t)
 		return
 	}
-	
+
 	// Run full integration test suite
 	cache := servicetest.CreateTestCache()
 	service := NewAppleMusicService(keyID, teamID, keyFile, cache)
-	
+
 	suite := &servicetest.PlatformServiceTestSuite{
 		Service:      service,
 		PlatformName: "apple_music",
@@ -98,7 +98,7 @@ func TestAppleMusicServiceIntegration(t *testing.T) {
 		SkipISRC:   false,
 		SkipSearch: false,
 	}
-	
+
 	suite.RunFullTestSuite(t)
 }
 
@@ -107,14 +107,14 @@ func BenchmarkAppleMusicService(b *testing.B) {
 	keyID := os.Getenv("TEST_APPLE_MUSIC_KEY_ID")
 	teamID := os.Getenv("TEST_APPLE_MUSIC_TEAM_ID")
 	keyFile := os.Getenv("TEST_APPLE_MUSIC_KEY_FILE")
-	
+
 	if keyID == "" || teamID == "" || keyFile == "" {
 		b.Skip("Skipping Apple Music benchmarks - credentials not provided")
 	}
-	
+
 	cache := servicetest.CreateTestCache()
 	service := NewAppleMusicService(keyID, teamID, keyFile, cache)
-	
+
 	suite := &servicetest.PlatformServiceBenchmarkSuite{
 		Service:     service,
 		TestTrackID: "1440857781",
@@ -125,6 +125,6 @@ func BenchmarkAppleMusicService(b *testing.B) {
 			Limit:  5,
 		},
 	}
-	
+
 	suite.RunBenchmarks(b)
 }

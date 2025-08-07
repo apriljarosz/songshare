@@ -1,0 +1,9 @@
+---
+globs: internal/search/**/*.go
+---
+## Search subsystem
+
+- **Structure**: Engine and coordination in [engine.go](mdc:internal/search/engine.go) and [coordinator.go](mdc:internal/search/coordinator.go). Ranking in [ranking.go](mdc:internal/search/ranking.go). Formatting and enhancement in [formatter.go](mdc:internal/search/formatter.go) and [enhancement.go](mdc:internal/search/enhancement.go).
+- **Sources**: Define inputs in [sources.go](mdc:internal/search/sources.go) and connect platforms via [platforms.go](mdc:internal/search/platforms.go).
+- **Caching**: Use components under [cache/](mdc:internal/search/cache/) and the shared cache layer in [internal/cache](mdc:internal/cache/).
+- **Adding a source**: Implement the source in [sources.go](mdc:internal/search/sources.go) or a new file, wire it in [engine.go](mdc:internal/search/engine.go), and adjust ranking in [ranking.go](mdc:internal/search/ranking.go) as needed.

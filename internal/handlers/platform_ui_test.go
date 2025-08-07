@@ -77,15 +77,15 @@ func TestRegisterPlatformUI(t *testing.T) {
 		BadgeClass:  "platform-test",
 		Description: "Listen on Test Platform",
 	}
-	
+
 	RegisterPlatformUI("test_platform", customConfig)
-	
+
 	// Verify it was registered
 	retrieved := GetPlatformUIConfig("test_platform")
 	assert.Equal(t, customConfig.Name, retrieved.Name)
 	assert.Equal(t, customConfig.IconURL, retrieved.IconURL)
 	assert.Equal(t, customConfig.Color, retrieved.Color)
-	
+
 	// Clean up
 	delete(platformUIRegistry, "test_platform")
 }
@@ -162,7 +162,7 @@ func TestRenderPlatformIcon(t *testing.T) {
 
 func TestRenderPlatformBadge(t *testing.T) {
 	result := RenderPlatformBadge("spotify", "https://open.spotify.com/track/test")
-	
+
 	// Check that the result contains expected elements
 	assert.Contains(t, result, `href="https://open.spotify.com/track/test"`)
 	assert.Contains(t, result, `class="platform-badge platform-spotify"`)
@@ -174,7 +174,7 @@ func TestRenderPlatformBadge(t *testing.T) {
 
 func TestRenderPlatformButton(t *testing.T) {
 	result := RenderPlatformButton("apple_music", "https://music.apple.com/song/test")
-	
+
 	// Check that the result contains expected elements
 	assert.Contains(t, result, `href="https://music.apple.com/song/test"`)
 	assert.Contains(t, result, `class="platform-btn platform-apple-music"`)
@@ -187,7 +187,7 @@ func TestRenderPlatformButton(t *testing.T) {
 
 func TestGetPlatformCSS(t *testing.T) {
 	css := GetPlatformCSS()
-	
+
 	// Should contain CSS variables for known platforms
 	assert.Contains(t, css, ":root {")
 	assert.Contains(t, css, "--color-spotify: #1DB954;")
@@ -238,11 +238,11 @@ func TestValidateIconURL(t *testing.T) {
 
 func TestRenderPlatformWithOptions(t *testing.T) {
 	tests := []struct {
-		name     string
-		platform string
-		url      string
-		options  PlatformUIOptions
-		contains []string
+		name        string
+		platform    string
+		url         string
+		options     PlatformUIOptions
+		contains    []string
 		notContains []string
 	}{
 		{
@@ -307,11 +307,11 @@ func TestRenderPlatformWithOptions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := RenderPlatformWithOptions(tt.platform, tt.url, tt.options)
-			
+
 			for _, expected := range tt.contains {
 				assert.Contains(t, result, expected, "Result should contain: %s", expected)
 			}
-			
+
 			for _, notExpected := range tt.notContains {
 				assert.NotContains(t, result, notExpected, "Result should not contain: %s", notExpected)
 			}
@@ -321,12 +321,12 @@ func TestRenderPlatformWithOptions(t *testing.T) {
 
 func TestGetAllPlatformUIConfigs(t *testing.T) {
 	configs := GetAllPlatformUIConfigs()
-	
+
 	// Should contain known platforms
 	assert.Contains(t, configs, "spotify")
 	assert.Contains(t, configs, "apple_music")
 	assert.Contains(t, configs, "youtube_music")
-	
+
 	// Verify a specific config
 	spotifyConfig := configs["spotify"]
 	assert.Equal(t, "Spotify", spotifyConfig.Name)
@@ -336,7 +336,7 @@ func TestGetAllPlatformUIConfigs(t *testing.T) {
 // Benchmark tests
 func BenchmarkGetPlatformUIConfig(b *testing.B) {
 	platforms := []string{"spotify", "apple_music", "youtube_music", "unknown_platform"}
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		platform := platforms[i%len(platforms)]
@@ -353,7 +353,7 @@ func BenchmarkRenderPlatformBadge(b *testing.B) {
 
 func BenchmarkFormatPlatformName(b *testing.B) {
 	platforms := []string{"spotify", "apple_music", "youtube_music", "sound_cloud"}
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		platform := platforms[i%len(platforms)]
