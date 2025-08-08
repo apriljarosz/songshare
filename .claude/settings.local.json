@@ -32,7 +32,8 @@
       "WebFetch(domain:upload.wikimedia.org)",
       "mcp__gopls__go_symbol_references",
       "mcp__gopls__go_package_api",
-      "mcp__gopls__go_diagnostics"
+      "mcp__gopls__go_diagnostics",
+      "Bash(gitleaks detect:*)"
     ],
     "deny": []
   }

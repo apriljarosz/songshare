@@ -202,6 +202,19 @@
                         <option value="50">50 results</option>
                     </select>
                 </div>
+
+                <div class="filter-group">
+                    <label for="debug">Debug</label>
+                    <label style="display:flex; align-items:center; gap:0.5rem;">
+                        <input type="checkbox" name="debug" value="1" 
+                               hx-get="/api/v1/search/results" 
+                               hx-target="#search-results" 
+                               hx-trigger="change" 
+                               hx-include="closest form" 
+                               hx-indicator="#loading">
+                        Show ranking stats
+                    </label>
+                </div>
             </div>
         </form>
         

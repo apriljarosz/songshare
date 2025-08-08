@@ -45,6 +45,11 @@ func (c *Coordinator) enhanceSingleResultPlatforms(ctx context.Context, result G
 	} else {
 		c.enhanceBySearch(ctx, result, hasSpotify, hasAppleMusic, hasTidal)
 	}
+	// If TIDAL is the only platform and album/image missing, try a live fetch to populate
+	if !hasSpotify && !hasAppleMusic && hasTidal {
+		// No-op here; improvement would call TIDAL GetTrackByISRC if ISRC present
+		// Left as comment to avoid additional API calls without caching layer in place
+	}
 }
 
 // enhanceByISRC attempts to find the song on missing platforms using ISRC
@@ -69,19 +74,19 @@ func (c *Coordinator) enhanceByISRC(ctx context.Context, result GroupedSearchRes
 
 		track, err := platform.service.GetTrackByISRC(enhanceCtx, result.ISRC)
 		if err != nil {
-			slog.Debug("ISRC lookup failed", 
-				"platform", platform.name, 
-				"isrc", result.ISRC, 
+			slog.Debug("ISRC lookup failed",
+				"platform", platform.name,
+				"isrc", result.ISRC,
 				"error", err)
 			continue
 		}
 
 		if track != nil {
-			slog.Debug("Enhanced result with ISRC lookup", 
+			slog.Debug("Enhanced result with ISRC lookup",
 				"platform", platform.name,
 				"title", result.Title,
 				"isrc", result.ISRC)
-			
+
 			// In a full implementation, this would update the result
 			// For now, just log the successful enhancement
 		}
@@ -120,9 +125,9 @@ func (c *Coordinator) enhanceBySearch(ctx context.Context, result GroupedSearchR
 		})
 
 		if err != nil {
-			slog.Debug("Enhancement search failed", 
-				"platform", platform.name, 
-				"query", searchQuery, 
+			slog.Debug("Enhancement search failed",
+				"platform", platform.name,
+				"query", searchQuery,
 				"error", err)
 			continue
 		}
@@ -130,11 +135,11 @@ func (c *Coordinator) enhanceBySearch(ctx context.Context, result GroupedSearchR
 		// Find best match
 		bestMatch := c.findBestMatch(result, tracks)
 		if bestMatch != nil {
-			slog.Debug("Enhanced result with search", 
+			slog.Debug("Enhanced result with search",
 				"platform", platform.name,
 				"title", result.Title,
 				"match_title", bestMatch.Title)
-			
+
 			// In a full implementation, this would update the result
 			// For now, just log the successful enhancement
 		}

@@ -12,20 +12,20 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"songshare/internal/handlers/render"
 	"songshare/internal/models"
 	"songshare/internal/repositories"
 	"songshare/internal/scoring"
 	"songshare/internal/search"
 	"songshare/internal/services"
+
+	"github.com/gin-gonic/gin"
 )
 
 // ResolveSongRequest represents the request to resolve a song from a platform URL
 type ResolveSongRequest struct {
 	URL string `json:"url" binding:"required"`
 }
-
 
 // SearchSongsRequest represents the request to search for songs
 type SearchSongsRequest struct {
@@ -245,7 +245,6 @@ func (h *SongHandler) renderSongJSON(c *gin.Context, song *models.Song) {
 	h.renderer.RenderSongJSON(c, song)
 }
 
-
 // renderSongPage returns HTML page with HTMX support
 func (h *SongHandler) renderSongPage(c *gin.Context, song *models.Song) {
 	// Adapter function to convert PlatformUIConfig types
@@ -398,6 +397,7 @@ func (h *SongHandler) SearchResults(c *gin.Context) {
 	query := strings.TrimSpace(c.Query("q"))
 	platform := strings.TrimSpace(c.Query("platform"))
 	limitStr := c.Query("limit")
+	sortBy := strings.ToLower(strings.TrimSpace(c.Query("sort")))
 
 	// Parse limit
 	limit := 10
@@ -426,7 +426,22 @@ func (h *SongHandler) SearchResults(c *gin.Context) {
 	}
 
 	// Group results by song
-	groupedResults := h.searchCoordinator.GroupResults(allResults, query)
+	includeDebug := strings.EqualFold(c.Query("debug"), "1") || strings.EqualFold(c.Query("debug"), "true")
+	groupedResults := h.searchCoordinator.GroupResults(allResults, query, includeDebug)
+
+	// Optional client-controlled sorting
+	switch sortBy {
+	case "popular", "popularity":
+		sort.SliceStable(groupedResults, func(i, j int) bool {
+			if groupedResults[i].Popularity != groupedResults[j].Popularity {
+				return groupedResults[i].Popularity > groupedResults[j].Popularity
+			}
+			// fall back to relevance order
+			return groupedResults[i].RelevanceScore > groupedResults[j].RelevanceScore
+		})
+	default:
+		// keep relevance-based order
+	}
 
 	// Start background enhancements
 	go h.searchCoordinator.EnhanceResultsPlatforms(c.Request.Context(), groupedResults)
@@ -442,12 +457,10 @@ func (h *SongHandler) SearchResults(c *gin.Context) {
 		go h.searchCoordinator.BackgroundIndexTracks(query, platformResults)
 	}
 
-	// Generate HTML for grouped results  
+	// Generate HTML for grouped results
 	html := h.renderGroupedSearchResultsHTML(groupedResults)
 	c.String(http.StatusOK, html)
 }
-
-
 
 // searchLocalSongs searches the local MongoDB database
 
@@ -559,6 +572,29 @@ func (h *SongHandler) renderGroupedSearchResultsHTML(results []search.GroupedSea
 			html.WriteString(fmt.Sprintf(`<div class="result-album">%s</div>`, result.Album))
 		}
 
+		// If debug breakdown present, render it
+		if result.Debug != nil {
+			html.WriteString(`<div class="result-debug">`)
+			html.WriteString(fmt.Sprintf(`<div>Text: %.1f</div>`, result.Debug.TextMatch))
+			html.WriteString(fmt.Sprintf(`<div>Popularity input: %d</div>`, result.Debug.PopularityInput))
+			html.WriteString(fmt.Sprintf(`<div>Popularity boost: %.1f</div>`, result.Debug.PopularityBoost))
+			html.WriteString(fmt.Sprintf(`<div>Context: %.1f</div>`, result.Debug.Context))
+			html.WriteString(fmt.Sprintf(`<div>Final: %.1f</div>`, result.Debug.Final))
+			if len(result.DebugPlatformPops) > 0 {
+				html.WriteString(`<div>Per-platform popularity:</div>`)
+				for p, v := range result.DebugPlatformPops {
+					html.WriteString(fmt.Sprintf(`<div>&nbsp;&nbsp;%s: %d</div>`, p, v))
+				}
+				if result.DebugRepPlatform != "" {
+					html.WriteString(fmt.Sprintf(`<div>Rep platform: %s</div>`, result.DebugRepPlatform))
+				}
+				if result.DebugAggPopularity > 0 {
+					html.WriteString(fmt.Sprintf(`<div>Aggregate popularity: %d</div>`, result.DebugAggPopularity))
+				}
+			}
+			html.WriteString(`</div>`)
+		}
+
 		// Platform badges (multiple platforms) - clickable badges that link directly to platforms
 		html.WriteString(fmt.Sprintf(`<div class="result-platforms" id="%s-platforms">`, result.ID))
 
@@ -578,7 +614,7 @@ func (h *SongHandler) renderGroupedSearchResultsHTML(results []search.GroupedSea
 		})
 
 		for _, platform := range sortedPlatforms {
-			// Use dynamic platform UI system for badges  
+			// Use dynamic platform UI system for badges
 			badgeHTML := RenderPlatformBadge(platform.Platform, platform.URL)
 			html.WriteString(badgeHTML)
 		}

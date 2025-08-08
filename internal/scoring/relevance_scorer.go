@@ -4,6 +4,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"songshare/internal/config"
 )
 
 // SearchResult represents a song search result
@@ -38,6 +40,15 @@ func NewRelevanceScorer() *RelevanceScorer {
 	return &RelevanceScorer{}
 }
 
+// RelevanceBreakdown provides detailed component scores used for ranking
+type RelevanceBreakdown struct {
+	TextMatch       float64 `json:"text_match"`
+	PopularityInput int     `json:"popularity_input"`
+	PopularityBoost float64 `json:"popularity_boost"`
+	Context         float64 `json:"context"`
+	Final           float64 `json:"final"`
+}
+
 // CalculateRelevanceScore calculates a balanced relevance score (0-100 scale) with enhanced popularity handling
 func (rs *RelevanceScorer) CalculateRelevanceScore(result SearchResult, source string, query string, index int, allResults []SearchResultWithSource) float64 {
 	// NEW BALANCED SCORING SYSTEM (0-100 scale)
@@ -54,6 +65,10 @@ func (rs *RelevanceScorer) CalculateRelevanceScore(result SearchResult, source s
 	// 2. POPULARITY BOOST (0-25 points) - Secondary factor with smart fallbacks
 	enhancedPopularity := rs.getPopularityWithFallbacks(result, allResults)
 	popularityBoost := rs.calculatePopularityBoost(enhancedPopularity)
+	// Apply configurable multiplier to popularity influence
+	if cfg := config.GetRankingConfig(); cfg != nil && cfg.PopularityBoostMultiplier > 0 {
+		popularityBoost *= cfg.PopularityBoostMultiplier
+	}
 	score += popularityBoost
 
 	// 3. CONTEXT & QUALITY (0-15 points) - Tie-breakers
@@ -61,6 +76,27 @@ func (rs *RelevanceScorer) CalculateRelevanceScore(result SearchResult, source s
 	score += contextScore
 
 	return score
+}
+
+// CalculateRelevanceBreakdown returns the individual components contributing to the final score
+func (rs *RelevanceScorer) CalculateRelevanceBreakdown(result SearchResult, source string, query string, index int, allResults []SearchResultWithSource) RelevanceBreakdown {
+	breakdown := RelevanceBreakdown{}
+	textScore := rs.calculateTextMatchScore(result, query)
+	breakdown.TextMatch = textScore
+
+	enhancedPopularity := rs.getPopularityWithFallbacks(result, allResults)
+	breakdown.PopularityInput = enhancedPopularity
+	popularityBoost := rs.calculatePopularityBoost(enhancedPopularity)
+	if cfg := config.GetRankingConfig(); cfg != nil && cfg.PopularityBoostMultiplier > 0 {
+		popularityBoost *= cfg.PopularityBoostMultiplier
+	}
+	breakdown.PopularityBoost = popularityBoost
+
+	contextScore := rs.calculateContextScore(result, source)
+	breakdown.Context = contextScore
+
+	breakdown.Final = textScore + popularityBoost + contextScore
+	return breakdown
 }
 
 // calculateTextMatchScore calculates enhanced text matching score (0-60 points)
@@ -204,7 +240,8 @@ func (rs *RelevanceScorer) parseYear(dateStr string) int {
 // CalculateAggregatePopularity computes weighted average popularity across platforms for same ISRC
 func (rs *RelevanceScorer) CalculateAggregatePopularity(searchResults []SearchResultWithSource, isrc string) int {
 	if isrc == "" {
-		return rs.getHighestPopularity(searchResults)
+		// No ISRC provided; cannot aggregate reliably
+		return 0
 	}
 
 	// Collect popularity scores from all platforms with same ISRC
@@ -216,7 +253,8 @@ func (rs *RelevanceScorer) CalculateAggregatePopularity(searchResults []SearchRe
 	}
 
 	if len(platformScores) == 0 {
-		return rs.getHighestPopularity(searchResults)
+		// No platform provided a popularity for this ISRC; treat as unknown
+		return 0
 	}
 
 	// Use weighted average with platform reliability weights
@@ -228,11 +266,15 @@ func (rs *RelevanceScorer) calculateWeightedPopularityAverage(platformScores map
 	totalScore := 0.0
 	totalWeight := 0.0
 
-	// Platform reliability weights based on user base size and data quality
-	platformWeights := map[string]float64{
-		"spotify":     1.0, // Most comprehensive data, largest user base
-		"tidal":       0.8, // Good data quality, smaller user base
-		"apple_music": 0.0, // No popularity data currently
+	// Platform reliability weights (configurable)
+	cfg := config.GetRankingConfig()
+	platformWeights := cfg.PopularityPlatformWeights
+	if platformWeights == nil || len(platformWeights) == 0 {
+		platformWeights = map[string]float64{
+			"spotify":     1.0,
+			"tidal":       0.8,
+			"apple_music": 0.0,
+		}
 	}
 
 	for platform, score := range platformScores {
@@ -273,16 +315,20 @@ func (rs *RelevanceScorer) getPopularityWithFallbacks(track SearchResult, allRes
 		return track.Popularity
 	}
 
-	// 2. Use same-ISRC popularity from other platforms
+	// 2. Use same-ISRC popularity from other platforms (take max, not first)
 	if track.ISRC != "" {
+		maxPop := 0
 		for _, other := range allResults {
-			if other.SearchResult.ISRC == track.ISRC && other.SearchResult.Popularity > 0 {
-				return other.SearchResult.Popularity
+			if other.SearchResult.ISRC == track.ISRC && other.SearchResult.Popularity > maxPop {
+				maxPop = other.SearchResult.Popularity
 			}
+		}
+		if maxPop > 0 {
+			return maxPop
 		}
 	}
 
-	// 3. Use artist average popularity (basic implementation)
+	// 3. Use artist average popularity (basic implementation) only if no ISRC popularity found
 	if len(track.Artists) > 0 {
 		artistPopularity := rs.getArtistAveragePopularity(track.Artists[0], allResults)
 		if artistPopularity > 0 {
@@ -291,7 +337,7 @@ func (rs *RelevanceScorer) getPopularityWithFallbacks(track SearchResult, allRes
 	}
 
 	// 4. Default moderate score instead of 0 to prevent unknown songs from being buried
-	return 30
+	return 0
 }
 
 // getArtistAveragePopularity calculates average popularity for artist's other songs

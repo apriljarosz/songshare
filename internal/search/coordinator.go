@@ -4,7 +4,9 @@ import (
 	"context"
 	"log/slog"
 	"sort"
+	"strings"
 
+	"songshare/internal/config"
 	"songshare/internal/handlers/render"
 	"songshare/internal/repositories"
 	"songshare/internal/scoring"
@@ -42,6 +44,13 @@ type GroupedSearchResult struct {
 	// For sorting - track the best relevance score and position
 	RelevanceScore float64
 	OriginalIndex  int
+
+	// Optional debug breakdown
+	Debug *scoring.RelevanceBreakdown
+	// Debug-only fields for visibility into popularity handling
+	DebugRepPlatform   string
+	DebugAggPopularity int
+	DebugPlatformPops  map[string]int
 }
 
 // Coordinator handles search operations across local and platform sources
@@ -96,7 +105,7 @@ func (c *Coordinator) SearchAll(ctx context.Context, query string, platformFilte
 }
 
 // GroupResults groups search results by song, combining multiple platform entries
-func (c *Coordinator) GroupResults(results []render.SearchResultWithSource, query string) []GroupedSearchResult {
+func (c *Coordinator) GroupResults(results []render.SearchResultWithSource, query string, includeDebug bool) []GroupedSearchResult {
 	// Map to group results by unique songs
 	songMap := make(map[string]*GroupedSearchResult)
 
@@ -161,8 +170,8 @@ func (c *Coordinator) GroupResults(results []render.SearchResultWithSource, quer
 				existing.LocalURL = result.URL
 			}
 
-			// Calculate aggregate popularity using scoring results
-			if i < len(scoringResults) {
+			// Calculate aggregate popularity using scoring results only when ISRC is known
+			if i < len(scoringResults) && existing.ISRC != "" {
 				existing.Popularity = c.scorer.CalculateAggregatePopularity(scoringResults, existing.ISRC)
 			}
 		} else {
@@ -191,8 +200,8 @@ func (c *Coordinator) GroupResults(results []render.SearchResultWithSource, quer
 				grouped.LocalURL = result.URL
 			}
 
-			// Set popularity from scoring results if available
-			if i < len(scoringResults) {
+			// Set popularity: aggregate across platforms when ISRC is known; otherwise use this track's popularity
+			if i < len(scoringResults) && result.ISRC != "" {
 				grouped.Popularity = c.scorer.CalculateAggregatePopularity(scoringResults, result.ISRC)
 			} else {
 				grouped.Popularity = result.Popularity
@@ -209,28 +218,59 @@ func (c *Coordinator) GroupResults(results []render.SearchResultWithSource, quer
 	}
 
 	// Rank by relevance using scoring.RelevanceScorer with the original flat results as context
-	// Build a flat scoring list for representative items (use first platform link per group)
+	// Build a flat scoring list for representative items (choose platform by max per-platform popularity)
 	var representative []scoring.SearchResultWithSource
-	for _, grp := range groupedResults {
-		// Choose the first platform link as representative; source "platform" unless we had a local link
+	for gi := range groupedResults {
+		grp := &groupedResults[gi]
+		// Choose representative platform by highest platform-specific popularity when possible
+		repPlatform := c.chooseRepresentativePlatform(*grp, scoringResults)
+		// Determine source: "platform" unless we had a local link
 		source := "platform"
 		if grp.HasLocalLink {
 			source = "local"
 		}
+		// Find URL for the chosen platform
+		repURL := ""
+		for _, pl := range grp.PlatformLinks {
+			if pl.Platform == repPlatform {
+				repURL = pl.URL
+				break
+			}
+		}
+		if repURL == "" && len(grp.PlatformLinks) > 0 {
+			repPlatform = grp.PlatformLinks[0].Platform
+			repURL = grp.PlatformLinks[0].URL
+		}
+		// Select platform-specific popularity for the representative if available
+		repPopularity := grp.Popularity
+		if grp.ISRC != "" {
+			for _, sr := range scoringResults {
+				if sr.SearchResult.ISRC == grp.ISRC && sr.SearchResult.Platform == repPlatform && sr.SearchResult.Popularity > 0 {
+					repPopularity = sr.SearchResult.Popularity
+					break
+				}
+			}
+		}
+
+		// Populate debug fields
+		if grp.ISRC != "" {
+			platformPops := make(map[string]int)
+			for _, sr := range scoringResults {
+				if sr.SearchResult.ISRC == grp.ISRC && sr.SearchResult.Popularity > 0 {
+					platformPops[sr.SearchResult.Platform] = sr.SearchResult.Popularity
+				}
+			}
+			grp.DebugPlatformPops = platformPops
+			grp.DebugRepPlatform = repPlatform
+			grp.DebugAggPopularity = c.scorer.CalculateAggregatePopularity(scoringResults, grp.ISRC)
+		} else {
+			grp.DebugRepPlatform = repPlatform
+		}
+
 		representative = append(representative, scoring.SearchResultWithSource{
 			SearchResult: scoring.SearchResult{
-				Platform: func() string {
-					if len(grp.PlatformLinks) > 0 {
-						return grp.PlatformLinks[0].Platform
-					}
-					return ""
-				}(),
-				URL: func() string {
-					if len(grp.PlatformLinks) > 0 {
-						return grp.PlatformLinks[0].URL
-					}
-					return ""
-				}(),
+				Platform:    repPlatform,
+				URL:         repURL,
 				Title:       grp.Title,
 				Artists:     grp.Artists,
 				Album:       grp.Album,
@@ -238,7 +278,7 @@ func (c *Coordinator) GroupResults(results []render.SearchResultWithSource, quer
 				DurationMs:  grp.DurationMs,
 				ReleaseDate: grp.ReleaseDate,
 				ImageURL:    grp.ImageURL,
-				Popularity:  grp.Popularity,
+				Popularity:  repPopularity,
 				Explicit:    grp.Explicit,
 				Available:   true,
 			},
@@ -257,19 +297,147 @@ func (c *Coordinator) GroupResults(results []render.SearchResultWithSource, quer
 				representative,
 			)
 			groupedResults[i].OriginalIndex = i
+			// Attach debug breakdown if requested
+			if includeDebug {
+				bd := c.scorer.CalculateRelevanceBreakdown(
+					representative[i].SearchResult,
+					representative[i].Source,
+					query,
+					i,
+					representative,
+				)
+				groupedResults[i].Debug = &bd
+			}
 		}
 	}
 
-	// Sort by relevance score desc, tie-break by aggregate popularity desc
+	// Sort by relevance score desc; if close, prefer higher popularity; ensure deterministic final order
+	cfg := config.GetRankingConfig()
+	epsilon := cfg.TieEpsilon
+	if epsilon <= 0 {
+		epsilon = 2.5
+	}
 	sort.SliceStable(groupedResults, func(i, j int) bool {
-		if groupedResults[i].RelevanceScore != groupedResults[j].RelevanceScore {
-			return groupedResults[i].RelevanceScore > groupedResults[j].RelevanceScore
+		si := groupedResults[i].RelevanceScore
+		sj := groupedResults[j].RelevanceScore
+		if si != sj {
+			// Treat small differences as ties and fall back to popularity
+			if diff := si - sj; diff > 0 {
+				if diff < epsilon { // epsilon threshold
+					if groupedResults[i].Popularity != groupedResults[j].Popularity {
+						return groupedResults[i].Popularity > groupedResults[j].Popularity
+					}
+					// Deterministic fallbacks
+					ti := strings.ToLower(groupedResults[i].Title)
+					tj := strings.ToLower(groupedResults[j].Title)
+					if ti != tj {
+						return ti < tj
+					}
+					ai := ""
+					if len(groupedResults[i].Artists) > 0 {
+						ai = strings.ToLower(groupedResults[i].Artists[0])
+					}
+					aj := ""
+					if len(groupedResults[j].Artists) > 0 {
+						aj = strings.ToLower(groupedResults[j].Artists[0])
+					}
+					if ai != aj {
+						return ai < aj
+					}
+					albi := strings.ToLower(groupedResults[i].Album)
+					albj := strings.ToLower(groupedResults[j].Album)
+					if albi != albj {
+						return albi < albj
+					}
+					return groupedResults[i].OriginalIndex < groupedResults[j].OriginalIndex
+				}
+				return true
+			}
+			// si < sj
+			if sj-si < epsilon {
+				if groupedResults[i].Popularity != groupedResults[j].Popularity {
+					return groupedResults[i].Popularity > groupedResults[j].Popularity
+				}
+				// Deterministic fallbacks
+				ti := strings.ToLower(groupedResults[i].Title)
+				tj := strings.ToLower(groupedResults[j].Title)
+				if ti != tj {
+					return ti < tj
+				}
+				ai := ""
+				if len(groupedResults[i].Artists) > 0 {
+					ai = strings.ToLower(groupedResults[i].Artists[0])
+				}
+				aj := ""
+				if len(groupedResults[j].Artists) > 0 {
+					aj = strings.ToLower(groupedResults[j].Artists[0])
+				}
+				if ai != aj {
+					return ai < aj
+				}
+				albi := strings.ToLower(groupedResults[i].Album)
+				albj := strings.ToLower(groupedResults[j].Album)
+				if albi != albj {
+					return albi < albj
+				}
+				return groupedResults[i].OriginalIndex < groupedResults[j].OriginalIndex
+			}
+			return false
 		}
 		if groupedResults[i].Popularity != groupedResults[j].Popularity {
 			return groupedResults[i].Popularity > groupedResults[j].Popularity
+		}
+		// Deterministic fallback on title, first artist, and album
+		ti := strings.ToLower(groupedResults[i].Title)
+		tj := strings.ToLower(groupedResults[j].Title)
+		if ti != tj {
+			return ti < tj
+		}
+		ai := ""
+		if len(groupedResults[i].Artists) > 0 {
+			ai = strings.ToLower(groupedResults[i].Artists[0])
+		}
+		aj := ""
+		if len(groupedResults[j].Artists) > 0 {
+			aj = strings.ToLower(groupedResults[j].Artists[0])
+		}
+		if ai != aj {
+			return ai < aj
+		}
+		albi := strings.ToLower(groupedResults[i].Album)
+		albj := strings.ToLower(groupedResults[j].Album)
+		if albi != albj {
+			return albi < albj
 		}
 		return groupedResults[i].OriginalIndex < groupedResults[j].OriginalIndex
 	})
 
 	return groupedResults
+}
+
+// chooseRepresentativePlatform selects the platform to represent a group when scoring
+// Prefers the platform with the highest popularity for the same ISRC across scoringResults.
+// Falls back to the first available platform when data is missing.
+func (c *Coordinator) chooseRepresentativePlatform(grp GroupedSearchResult, scoringResults []scoring.SearchResultWithSource) string {
+	if grp.ISRC != "" {
+		bestPlatform := ""
+		bestPopularity := -1
+		// Look through all scoring results for same ISRC
+		for _, sr := range scoringResults {
+			if sr.SearchResult.ISRC == grp.ISRC {
+				if sr.SearchResult.Popularity > bestPopularity {
+					bestPopularity = sr.SearchResult.Popularity
+					bestPlatform = sr.SearchResult.Platform
+				}
+			}
+		}
+		if bestPlatform != "" {
+			return bestPlatform
+		}
+	}
+	// Fallback to first platform link
+	if len(grp.PlatformLinks) > 0 {
+		return grp.PlatformLinks[0].Platform
+	}
+	return ""
 }

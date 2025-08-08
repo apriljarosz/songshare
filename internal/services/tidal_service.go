@@ -12,8 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/jsonapi"
 	"songshare/internal/config"
+
+	"github.com/google/jsonapi"
 )
 
 // TidalService implements the PlatformService interface for Tidal
@@ -102,7 +103,7 @@ func (t *TidalService) GetTrackByID(ctx context.Context, trackID string) (*Track
 		return nil, fmt.Errorf("failed to parse track response: %w", err)
 	}
 
-	trackInfo := t.parseTrackFromResource(response.Data, response.Included)
+	trackInfo := t.parseTrackFromResource(ctx, response.Data, response.Included)
 	if trackInfo == nil {
 		return nil, &PlatformError{
 			Platform:  "tidal",
@@ -134,7 +135,8 @@ func (t *TidalService) SearchTrack(ctx context.Context, query SearchQuery) ([]*T
 	params := url.Values{
 		"countryCode":    {"US"},
 		"explicitFilter": {"include,exclude"},
-		"include":        {"tracks,tracks.artists,tracks.album,tracks.album.coverArt"},
+		// Be generous with includes to ensure album and artworks are present across API variants
+		"include": {"tracks,tracks.artists,tracks.album,tracks.albums,tracks.album.coverArt,tracks.albums.coverArt,albums,albums.artworks"},
 	}
 
 	// For now, let's use a simpler approach - make raw HTTP request and parse manually
@@ -149,13 +151,41 @@ func (t *TidalService) SearchTrack(ctx context.Context, query SearchQuery) ([]*T
 	}
 
 	// Parse JSON:API response manually to extract track data
-	trackInfos, err := t.parseSearchResponse(respBody)
+	trackInfos, err := t.parseSearchResponse(ctx, respBody)
 	if err != nil {
 		return nil, &PlatformError{
 			Platform:  "tidal",
 			Operation: "search",
 			Message:   fmt.Sprintf("failed to parse search response: %v", err),
 			Err:       err,
+		}
+	}
+
+	// Enrich missing album/cover data by fetching the track directly when needed
+	for i := range trackInfos {
+		ti := trackInfos[i]
+		if ti == nil {
+			continue
+		}
+		if ti.Album == "" || ti.ImageURL == "" {
+			if detailed, derr := t.GetTrackByID(ctx, ti.ExternalID); derr == nil && detailed != nil {
+				if ti.Album == "" && detailed.Album != "" {
+					ti.Album = detailed.Album
+				}
+				if ti.ImageURL == "" && detailed.ImageURL != "" {
+					ti.ImageURL = detailed.ImageURL
+				}
+				if ti.ReleaseDate == "" && detailed.ReleaseDate != "" {
+					ti.ReleaseDate = detailed.ReleaseDate
+				}
+			} else {
+				// If track fetch failed, attempt album fetch via relationships parsed from the search payload
+				// Best-effort; ignore errors
+			}
+		}
+		// Normalize artwork URL if it looks templated
+		if ti.ImageURL != "" {
+			ti.ImageURL = resolveArtworkURL(ti.ImageURL)
 		}
 	}
 
@@ -210,7 +240,7 @@ func (t *TidalService) GetTrackByISRC(ctx context.Context, isrc string) (*TrackI
 	}
 
 	// Parse the first track
-	trackInfo := t.parseTrackFromResource(response.Data[0], response.Included)
+	trackInfo := t.parseTrackFromResource(ctx, response.Data[0], response.Included)
 	if trackInfo == nil {
 		return nil, &PlatformError{
 			Platform:  "tidal",
@@ -453,31 +483,35 @@ func (t *TidalService) makeRawAPIRequest(ctx context.Context, method, endpoint s
 }
 
 // parseSearchResponse parses Tidal search response and extracts tracks
-func (t *TidalService) parseSearchResponse(respBody []byte) ([]*TrackInfo, error) {
+func (t *TidalService) parseSearchResponse(ctx context.Context, respBody []byte) ([]*TrackInfo, error) {
 	// Try to parse the response as a TidalSearchResult using jsonapi
 	var searchResult TidalSearchResult
 	if err := jsonapi.UnmarshalPayload(bytes.NewReader(respBody), &searchResult); err != nil {
 		// Fall back to manual parsing if jsonapi fails
-		return t.parseSearchResponseManually(respBody)
+		return t.parseSearchResponseManually(ctx, respBody)
 	}
 
 	var trackInfos []*TrackInfo
-	
+
 	// Convert TidalTrack objects to TrackInfo
 	for _, track := range searchResult.Tracks {
 		if track != nil {
-			trackInfo := track.ToTrackInfo()
-			if trackInfo != nil {
-				trackInfos = append(trackInfos, trackInfo)
+			ti := track.ToTrackInfo()
+			if ti != nil {
+				// Normalize/resolve album art if missing by attempting relationships fallback
+				if ti.ImageURL == "" || ti.Album == "" {
+					// Convert this track back to generic resource-like map is non-trivial; rely on later enrichment
+				}
+				trackInfos = append(trackInfos, ti)
 			}
 		}
 	}
-	
+
 	return trackInfos, nil
 }
 
 // parseSearchResponseManually is a fallback parser for when jsonapi unmarshaling fails
-func (t *TidalService) parseSearchResponseManually(respBody []byte) ([]*TrackInfo, error) {
+func (t *TidalService) parseSearchResponseManually(ctx context.Context, respBody []byte) ([]*TrackInfo, error) {
 	var response struct {
 		Data struct {
 			ID   string `json:"id"`
@@ -495,7 +529,7 @@ func (t *TidalService) parseSearchResponseManually(respBody []byte) ([]*TrackInf
 	// Extract tracks from included resources
 	for _, resource := range response.Included {
 		if resourceType, ok := resource["type"].(string); ok && resourceType == "tracks" {
-			trackInfo := t.parseTrackFromResource(resource, response.Included)
+			trackInfo := t.parseTrackFromResource(ctx, resource, response.Included)
 			if trackInfo != nil {
 				trackInfos = append(trackInfos, trackInfo)
 			}
@@ -506,7 +540,7 @@ func (t *TidalService) parseSearchResponseManually(respBody []byte) ([]*TrackInf
 }
 
 // parseTrackFromResource converts a JSON resource to TrackInfo
-func (t *TidalService) parseTrackFromResource(resource map[string]interface{}, included []map[string]interface{}) *TrackInfo {
+func (t *TidalService) parseTrackFromResource(ctx context.Context, resource map[string]interface{}, included []map[string]interface{}) *TrackInfo {
 	id, _ := resource["id"].(string)
 
 	attributes, ok := resource["attributes"].(map[string]interface{})
@@ -526,7 +560,7 @@ func (t *TidalService) parseTrackFromResource(resource map[string]interface{}, i
 
 	// Parse relationships to get artists and albums
 	artists := t.parseArtistsFromRelationships(resource, included)
-	albumInfo := t.parseAlbumFromRelationships(resource, included)
+	albumInfo := t.parseAlbumFromRelationships(ctx, resource, included)
 
 	return &TrackInfo{
 		Platform:    "tidal",
@@ -555,42 +589,42 @@ type AlbumInfo struct {
 // parseArtistsFromRelationships extracts artist names from JSON:API relationships
 func (t *TidalService) parseArtistsFromRelationships(resource map[string]interface{}, included []map[string]interface{}) []string {
 	var artists []string
-	
+
 	// Get relationships from the track resource
 	relationships, ok := resource["relationships"].(map[string]interface{})
 	if !ok {
 		return artists
 	}
-	
+
 	// Get artist relationships
 	artistsRel, ok := relationships["artists"].(map[string]interface{})
 	if !ok {
 		return artists
 	}
-	
+
 	// Get the data array from artists relationship
 	artistsData, ok := artistsRel["data"].([]interface{})
 	if !ok {
 		return artists
 	}
-	
+
 	// Extract artist IDs and find them in included data
 	for _, artistRef := range artistsData {
 		artistRefMap, ok := artistRef.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		
+
 		artistID, ok := artistRefMap["id"].(string)
 		if !ok {
 			continue
 		}
-		
+
 		artistType, ok := artistRefMap["type"].(string)
 		if !ok || artistType != "artists" {
 			continue
 		}
-		
+
 		// Find the artist in included data
 		for _, includedItem := range included {
 			if includedItem["type"] == "artists" && includedItem["id"] == artistID {
@@ -603,68 +637,74 @@ func (t *TidalService) parseArtistsFromRelationships(resource map[string]interfa
 			}
 		}
 	}
-	
+
 	return artists
 }
 
 // parseAlbumFromRelationships extracts album information from JSON:API relationships
-func (t *TidalService) parseAlbumFromRelationships(resource map[string]interface{}, included []map[string]interface{}) AlbumInfo {
+func (t *TidalService) parseAlbumFromRelationships(ctx context.Context, resource map[string]interface{}, included []map[string]interface{}) AlbumInfo {
 	albumInfo := AlbumInfo{}
-	
+
 	// Get relationships from the track resource
 	relationships, ok := resource["relationships"].(map[string]interface{})
 	if !ok {
 		return albumInfo
 	}
-	
-	// Get album relationships
-	albumRel, ok := relationships["album"].(map[string]interface{})
-	if !ok {
+
+	// Get album relationship: handle both "album" (object) and "albums" (array) shapes
+	var albumID string
+	if albumRel, ok := relationships["album"].(map[string]interface{}); ok {
+		if albumData, ok := albumRel["data"].(map[string]interface{}); ok {
+			if id, ok := albumData["id"].(string); ok {
+				albumID = id
+			}
+		}
+	}
+	if albumID == "" {
+		if albumsRel, ok := relationships["albums"].(map[string]interface{}); ok {
+			// data could be array
+			if arr, ok := albumsRel["data"].([]interface{}); ok && len(arr) > 0 {
+				if first, ok := arr[0].(map[string]interface{}); ok {
+					if id, ok := first["id"].(string); ok {
+						albumID = id
+					}
+				}
+			}
+		}
+	}
+	if albumID == "" {
 		return albumInfo
 	}
-	
-	// Get the data from album relationship
-	albumData, ok := albumRel["data"].(map[string]interface{})
-	if !ok {
-		return albumInfo
-	}
-	
-	albumID, ok := albumData["id"].(string)
-	if !ok {
-		return albumInfo
-	}
-	
-	albumType, ok := albumData["type"].(string)
-	if !ok || albumType != "albums" {
-		return albumInfo
-	}
-	
+
 	// Find the album in included data
 	for _, includedItem := range included {
 		if includedItem["type"] == "albums" && includedItem["id"] == albumID {
 			if attributes, ok := includedItem["attributes"].(map[string]interface{}); ok {
 				// Extract album title
-				if albumTitle, ok := attributes["title"].(string); ok {
+				if albumTitle, ok := attributes["title"].(string); ok && albumTitle != "" {
 					albumInfo.Title = albumTitle
 				}
-				
+
 				// Extract release date
 				if releaseDate, ok := attributes["releaseDate"].(string); ok {
 					albumInfo.ReleaseDate = releaseDate
 				}
-				
-				// Extract cover art URL from cover attribute or coverArt relationships
-				if coverURL, ok := attributes["cover"].(string); ok && coverURL != "" {
-					albumInfo.ImageURL = coverURL
-				} else {
-					// Try to get cover art from relationships
-					albumInfo.ImageURL = t.parseCoverArtFromRelationships(includedItem, included)
+
+				// Extract cover art URL: prefer artworks url template, else cover hash
+				if artURL := t.parseCoverArtFromRelationships(includedItem, included); artURL != "" {
+					albumInfo.ImageURL = resolveArtworkURL(artURL)
+				} else if coverID, ok := attributes["cover"].(string); ok && coverID != "" {
+					albumInfo.ImageURL = coverIDToURL(coverID)
+				} else if img, ok := attributes["image"].(string); ok && img != "" {
+					albumInfo.ImageURL = resolveArtworkURL(img)
+				} else if imgURL, ok := attributes["imageUrl"].(string); ok && imgURL != "" {
+					albumInfo.ImageURL = resolveArtworkURL(imgURL)
 				}
 			}
 			break
 		}
 	}
-	
+
 	return albumInfo
 }
 
@@ -674,12 +714,12 @@ func (t *TidalService) parseCoverArtFromRelationships(albumResource map[string]i
 	if !ok {
 		return ""
 	}
-	
+
 	coverArtRel, ok := relationships["coverArt"].(map[string]interface{})
 	if !ok {
 		return ""
 	}
-	
+
 	// Cover art can be a single item or array
 	var coverArtData []interface{}
 	if coverArtArray, ok := coverArtRel["data"].([]interface{}); ok {
@@ -687,31 +727,55 @@ func (t *TidalService) parseCoverArtFromRelationships(albumResource map[string]i
 	} else if coverArtItem, ok := coverArtRel["data"].(map[string]interface{}); ok {
 		coverArtData = []interface{}{coverArtItem}
 	}
-	
+
 	if len(coverArtData) == 0 {
 		return ""
 	}
-	
+
 	// Get the first cover art item
 	coverArtRef, ok := coverArtData[0].(map[string]interface{})
 	if !ok {
 		return ""
 	}
-	
+
 	coverArtID, ok := coverArtRef["id"].(string)
 	if !ok {
 		return ""
 	}
-	
+
 	coverArtType, ok := coverArtRef["type"].(string)
 	if !ok || coverArtType != "artworks" {
 		return ""
 	}
-	
-	// Find the artwork in included data
+
+	// Find the artwork in included data (prefer explicit files list if present)
 	for _, includedItem := range included {
 		if includedItem["type"] == "artworks" && includedItem["id"] == coverArtID {
 			if attributes, ok := includedItem["attributes"].(map[string]interface{}); ok {
+				// Newer spec: attributes.files[].href with meta size
+				if files, ok := attributes["files"].([]interface{}); ok && len(files) > 0 {
+					// Choose the largest file
+					bestHref := ""
+					bestPixels := 0
+					for _, f := range files {
+						if fm, ok := f.(map[string]interface{}); ok {
+							href, _ := fm["href"].(string)
+							if meta, ok := fm["meta"].(map[string]interface{}); ok {
+								h, _ := meta["height"].(float64)
+								w, _ := meta["width"].(float64)
+								pixels := int(h * w)
+								if href != "" && pixels > bestPixels {
+									bestPixels = pixels
+									bestHref = href
+								}
+							}
+						}
+					}
+					if bestHref != "" {
+						return bestHref
+					}
+				}
+				// Older template field
 				if url, ok := attributes["url"].(string); ok {
 					return url
 				}
@@ -719,6 +783,6 @@ func (t *TidalService) parseCoverArtFromRelationships(albumResource map[string]i
 			break
 		}
 	}
-	
+
 	return ""
 }

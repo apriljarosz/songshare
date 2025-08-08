@@ -3,6 +3,8 @@ package search
 import (
 	"sort"
 	"strings"
+
+	"songshare/internal/config"
 )
 
 // Ranker handles relevance scoring and ranking of search results
@@ -12,14 +14,12 @@ type Ranker struct {
 
 // NewRanker creates a new result ranker with default platform weights
 func NewRanker() *Ranker {
-	return &Ranker{
-		platformWeights: map[string]float64{
-			"local":       1.2, // Prefer local results (already indexed)
-			"spotify":     1.1, // Slightly prefer Spotify (most popular)
-			"apple_music": 1.0, // Baseline
-			"tidal":       0.9, // Slightly lower preference
-		},
+	cfg := config.GetRankingConfig()
+	weights := make(map[string]float64, len(cfg.PlatformWeights))
+	for k, v := range cfg.PlatformWeights {
+		weights[k] = v
 	}
+	return &Ranker{platformWeights: weights}
 }
 
 // RankResults sorts search results by relevance score
@@ -30,7 +30,7 @@ func (r *Ranker) RankResults(results []SearchResult, query string) []SearchResul
 	}
 
 	// Sort by relevance score (highest first)
-	sort.Slice(results, func(i, j int) bool {
+	sort.SliceStable(results, func(i, j int) bool {
 		// Primary sort: relevance score
 		if results[i].RelevanceScore != results[j].RelevanceScore {
 			return results[i].RelevanceScore > results[j].RelevanceScore
@@ -44,7 +44,37 @@ func (r *Ranker) RankResults(results []SearchResult, query string) []SearchResul
 		// Tertiary sort: platform preference
 		weightI := r.getPlatformWeight(results[i].Platform)
 		weightJ := r.getPlatformWeight(results[j].Platform)
-		return weightI > weightJ
+		if weightI != weightJ {
+			return weightI > weightJ
+		}
+
+		// Deterministic tie-breakers for stable ordering across runs
+		ti := strings.ToLower(results[i].Title)
+		tj := strings.ToLower(results[j].Title)
+		if ti != tj {
+			return ti < tj
+		}
+		ai := ""
+		if len(results[i].Artists) > 0 {
+			ai = strings.ToLower(results[i].Artists[0])
+		}
+		aj := ""
+		if len(results[j].Artists) > 0 {
+			aj = strings.ToLower(results[j].Artists[0])
+		}
+		if ai != aj {
+			return ai < aj
+		}
+		albi := strings.ToLower(results[i].Album)
+		albj := strings.ToLower(results[j].Album)
+		if albi != albj {
+			return albi < albj
+		}
+		// Final fallback: ID then URL
+		if results[i].ID != results[j].ID {
+			return results[i].ID < results[j].ID
+		}
+		return results[i].URL < results[j].URL
 	})
 
 	return results
@@ -75,9 +105,13 @@ func (r *Ranker) calculateRelevance(result SearchResult, query string) float64 {
 		score += albumScore * 30.0 // Album matches get up to 30 points
 	}
 
-	// Popularity boost (normalized to 0-80 points)
+	// Popularity boost scaled by config (default up to 0-80)
 	if result.Popularity > 0 {
-		popularityScore := float64(result.Popularity) * 0.8 // 0-100 -> 0-80
+		popularityScale := config.GetRankingConfig().RankerPopularityScale
+		if popularityScale <= 0 {
+			popularityScale = 0.8
+		}
+		popularityScore := float64(result.Popularity) * popularityScale
 		score += popularityScore
 	}
 

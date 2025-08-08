@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"songshare/internal/handlers/render"
+    "songshare/internal/handlers/render"
 )
 
 // IndexingResult represents a track that should be indexed
 type IndexingResult struct {
-	Track    render.SearchResult
+    Track    render.SearchResult
 	Priority int
 	Query    string
 }

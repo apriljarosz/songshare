@@ -1,7 +1,7 @@
 package search
 
 import (
-	"crypto/rand"
+	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
 	"strings"
@@ -83,10 +83,9 @@ func (c *Coordinator) generateSearchResultID(result render.SearchResult) string 
 	// Fallback to normalized title + artist for songs without ISRC
 	key := c.generateSongKey(result)
 
-	// Create a short hash from the key
-	hash := make([]byte, 4)
-	rand.Read(hash)
-	hashStr := hex.EncodeToString(hash)
+	// Create a deterministic short hash from the key
+	sum := sha1.Sum([]byte(key))
+	hashStr := hex.EncodeToString(sum[:4])
 
 	return "result-" + key + "-" + hashStr
 }
