@@ -8,6 +8,7 @@ import (
 
 	"songshare/internal/config"
 	"songshare/internal/handlers/render"
+	"songshare/internal/models"
 	"songshare/internal/repositories"
 	"songshare/internal/scoring"
 	"songshare/internal/services"
@@ -109,6 +110,24 @@ func (c *Coordinator) GroupResults(results []render.SearchResultWithSource, quer
 	// Map to group results by unique songs
 	songMap := make(map[string]*GroupedSearchResult)
 
+	// Collect all ISRCs for batch lookup
+	var isrcsToLookup []string
+	isrcSet := make(map[string]bool)
+	for _, item := range results {
+		if item.SearchResult.ISRC != "" && !isrcSet[item.SearchResult.ISRC] {
+			isrcsToLookup = append(isrcsToLookup, item.SearchResult.ISRC)
+			isrcSet[item.SearchResult.ISRC] = true
+		}
+	}
+
+	// Batch fetch existing songs from database by ISRC
+	ctx := context.Background()
+	existingSongs, err := c.songRepository.FindByISRCBatch(ctx, isrcsToLookup)
+	if err != nil {
+		slog.Warn("Failed to batch fetch songs by ISRC", "error", err)
+		existingSongs = make(map[string]*models.Song)
+	}
+
 	// Convert to scoring format for relevance calculation
 	var scoringResults []scoring.SearchResultWithSource
 	for _, result := range results {
@@ -170,6 +189,45 @@ func (c *Coordinator) GroupResults(results []render.SearchResultWithSource, quer
 				existing.LocalURL = result.URL
 			}
 
+			// If we have an ISRC and this is the first time processing this group, check database
+			if result.ISRC != "" && !existing.HasLocalLink {
+				if existingSong, exists := existingSongs[result.ISRC]; exists && existingSong != nil {
+					// Mark as having local link
+					existing.HasLocalLink = true
+					existing.LocalURL = c.baseURL + "/s/" + existingSong.ISRC
+					
+					// Add all platform links from the database
+					for _, dbLink := range existingSong.PlatformLinks {
+						// Check if this platform is already in the list
+						platformExists := false
+						for _, existingLink := range existing.PlatformLinks {
+							if existingLink.Platform == dbLink.Platform {
+								platformExists = true
+								break
+							}
+						}
+						
+						// Add platform if not already present
+						if !platformExists && dbLink.Available && dbLink.URL != "" {
+							existing.PlatformLinks = append(existing.PlatformLinks, PlatformResult{
+								Platform:  dbLink.Platform,
+								URL:       dbLink.URL,
+								Available: dbLink.Available,
+								Source:    "local", // These come from database
+							})
+						}
+					}
+					
+					// Use database metadata if current is missing some
+					if existing.ImageURL == "" && existingSong.Metadata.ImageURL != "" {
+						existing.ImageURL = existingSong.Metadata.ImageURL
+					}
+					if existing.Album == "" && existingSong.Album != "" {
+						existing.Album = existingSong.Album
+					}
+				}
+			}
+
 			// Calculate aggregate popularity using scoring results only when ISRC is known
 			if i < len(scoringResults) && existing.ISRC != "" {
 				existing.Popularity = c.scorer.CalculateAggregatePopularity(scoringResults, existing.ISRC)
@@ -198,6 +256,45 @@ func (c *Coordinator) GroupResults(results []render.SearchResultWithSource, quer
 
 			if item.Source == "local" {
 				grouped.LocalURL = result.URL
+			}
+
+			// If we have an ISRC and found the song in database, merge all known platform links
+			if result.ISRC != "" {
+				if existingSong, exists := existingSongs[result.ISRC]; exists && existingSong != nil {
+					// Mark as having local link
+					grouped.HasLocalLink = true
+					grouped.LocalURL = c.baseURL + "/s/" + existingSong.ISRC
+					
+					// Add all platform links from the database
+					for _, dbLink := range existingSong.PlatformLinks {
+						// Check if this platform is already in the list
+						platformExists := false
+						for _, existingLink := range grouped.PlatformLinks {
+							if existingLink.Platform == dbLink.Platform {
+								platformExists = true
+								break
+							}
+						}
+						
+						// Add platform if not already present
+						if !platformExists && dbLink.Available && dbLink.URL != "" {
+							grouped.PlatformLinks = append(grouped.PlatformLinks, PlatformResult{
+								Platform:  dbLink.Platform,
+								URL:       dbLink.URL,
+								Available: dbLink.Available,
+								Source:    "local", // These come from database
+							})
+						}
+					}
+					
+					// Use database metadata if search result is missing some
+					if grouped.ImageURL == "" && existingSong.Metadata.ImageURL != "" {
+						grouped.ImageURL = existingSong.Metadata.ImageURL
+					}
+					if grouped.Album == "" && existingSong.Album != "" {
+						grouped.Album = existingSong.Album
+					}
+				}
 			}
 
 			// Set popularity: aggregate across platforms when ISRC is known; otherwise use this track's popularity

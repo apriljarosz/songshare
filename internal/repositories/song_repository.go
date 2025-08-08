@@ -15,6 +15,7 @@ type SongRepository interface {
 	// Find operations
 	FindByID(ctx context.Context, id string) (*models.Song, error)
 	FindByISRC(ctx context.Context, isrc string) (*models.Song, error)
+	FindByISRCBatch(ctx context.Context, isrcs []string) (map[string]*models.Song, error)
 	FindByTitleArtist(ctx context.Context, title, artist string) ([]*models.Song, error)
 	FindByPlatformID(ctx context.Context, platform, externalID string) (*models.Song, error)
 

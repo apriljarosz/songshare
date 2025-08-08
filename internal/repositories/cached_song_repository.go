@@ -106,6 +106,50 @@ func (r *cachedSongRepository) FindByISRC(ctx context.Context, isrc string) (*mo
 	return song, nil
 }
 
+// FindByISRCBatch checks cache for each ISRC, fetches missing ones from repository
+func (r *cachedSongRepository) FindByISRCBatch(ctx context.Context, isrcs []string) (map[string]*models.Song, error) {
+	if len(isrcs) == 0 {
+		return make(map[string]*models.Song), nil
+	}
+
+	result := make(map[string]*models.Song)
+	var missingISRCs []string
+
+	// Check cache for each ISRC
+	for _, isrc := range isrcs {
+		if isrc == "" {
+			continue
+		}
+		
+		cacheKey := songISRCKey(isrc)
+		if cached, err := r.getFromCache(ctx, cacheKey); err == nil && cached != nil {
+			result[isrc] = cached
+		} else {
+			missingISRCs = append(missingISRCs, isrc)
+		}
+	}
+
+	// If all found in cache, return early
+	if len(missingISRCs) == 0 {
+		return result, nil
+	}
+
+	// Fetch missing ISRCs from repository
+	dbResults, err := r.repository.FindByISRCBatch(ctx, missingISRCs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache the results and add to return map
+	for isrc, song := range dbResults {
+		cacheKey := songISRCKey(isrc)
+		r.cacheResult(ctx, cacheKey, song)
+		result[isrc] = song
+	}
+
+	return result, nil
+}
+
 // FindByTitleArtist - not cached due to fuzzy nature
 func (r *cachedSongRepository) FindByTitleArtist(ctx context.Context, title, artist string) ([]*models.Song, error) {
 	return r.repository.FindByTitleArtist(ctx, title, artist)

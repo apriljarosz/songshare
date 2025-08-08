@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"songshare/internal/models"
 	"songshare/internal/services"
 )
 
@@ -57,6 +58,36 @@ func (c *Coordinator) enhanceByISRC(ctx context.Context, result GroupedSearchRes
 	enhanceCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
+	// First, try to get existing song from database
+	var existingSong *models.Song
+	if result.ISRC != "" {
+		var err error
+		existingSong, err = c.songRepository.FindByISRC(enhanceCtx, result.ISRC)
+		if err != nil {
+			slog.Debug("Failed to find existing song by ISRC", "isrc", result.ISRC, "error", err)
+		}
+	}
+
+	// If no existing song, we'll need to create one
+	needsCreation := existingSong == nil
+	if needsCreation {
+		existingSong = &models.Song{
+			Title:  result.Title,
+			Artist: strings.Join(result.Artists, ", "),
+			Album:  result.Album,
+			ISRC:   result.ISRC,
+			Metadata: models.SongMetadata{
+				Duration:    result.DurationMs,
+				ReleaseDate: parseReleaseDate(result.ReleaseDate),
+				ImageURL:    result.ImageURL,
+			},
+			PlatformLinks: []models.PlatformLink{},
+		}
+	}
+
+	// Track if we found any new platforms
+	foundNewPlatforms := false
+
 	platforms := []struct {
 		name    string
 		missing bool
@@ -87,8 +118,58 @@ func (c *Coordinator) enhanceByISRC(ctx context.Context, result GroupedSearchRes
 				"title", result.Title,
 				"isrc", result.ISRC)
 
-			// In a full implementation, this would update the result
-			// For now, just log the successful enhancement
+			// Add this platform link to the song
+			newLink := models.PlatformLink{
+				Platform:   platform.name,
+				ExternalID: track.ExternalID,
+				URL:        track.URL,
+				Available:  track.Available,
+			}
+
+			// Check if this platform already exists in the song
+			platformExists := false
+			for i, existingLink := range existingSong.PlatformLinks {
+				if existingLink.Platform == platform.name {
+					// Update existing link
+					existingSong.PlatformLinks[i] = newLink
+					platformExists = true
+					foundNewPlatforms = true
+					break
+				}
+			}
+
+			if !platformExists {
+				// Add new platform link
+				existingSong.PlatformLinks = append(existingSong.PlatformLinks, newLink)
+				foundNewPlatforms = true
+			}
+
+			// Update metadata if we got better info
+			if existingSong.Metadata.ImageURL == "" && track.ImageURL != "" {
+				existingSong.Metadata.ImageURL = track.ImageURL
+			}
+		}
+	}
+
+	// Save the song if we found new platforms
+	if foundNewPlatforms {
+		var err error
+		if needsCreation {
+			err = c.songRepository.Save(enhanceCtx, existingSong)
+			slog.Info("Created new song from enhancement",
+				"title", existingSong.Title,
+				"isrc", existingSong.ISRC,
+				"platforms", len(existingSong.PlatformLinks))
+		} else {
+			err = c.songRepository.Update(enhanceCtx, existingSong)
+			slog.Info("Updated song with enhanced platforms",
+				"title", existingSong.Title,
+				"isrc", existingSong.ISRC,
+				"platforms", len(existingSong.PlatformLinks))
+		}
+		
+		if err != nil {
+			slog.Error("Failed to save enhanced song", "error", err)
 		}
 	}
 }
@@ -140,8 +221,51 @@ func (c *Coordinator) enhanceBySearch(ctx context.Context, result GroupedSearchR
 				"title", result.Title,
 				"match_title", bestMatch.Title)
 
-			// In a full implementation, this would update the result
-			// For now, just log the successful enhancement
+			// Only persist if we have an ISRC to ensure accuracy
+			if result.ISRC != "" && bestMatch.ISRC == result.ISRC {
+				// Try to update existing song in database
+				existingSong, err := c.songRepository.FindByISRC(enhanceCtx, result.ISRC)
+				if err == nil && existingSong != nil {
+					// Add this platform link if not already present
+					platformExists := false
+					for i, link := range existingSong.PlatformLinks {
+						if link.Platform == platform.name {
+							// Update existing link
+							existingSong.PlatformLinks[i] = models.PlatformLink{
+								Platform:   platform.name,
+								ExternalID: bestMatch.ExternalID,
+								URL:        bestMatch.URL,
+								Available:  bestMatch.Available,
+							}
+							platformExists = true
+							break
+						}
+					}
+					
+					if !platformExists {
+						existingSong.PlatformLinks = append(existingSong.PlatformLinks, models.PlatformLink{
+							Platform:   platform.name,
+							ExternalID: bestMatch.ExternalID,
+							URL:        bestMatch.URL,
+							Available:  bestMatch.Available,
+						})
+					}
+					
+					// Update metadata if better
+					if existingSong.Metadata.ImageURL == "" && bestMatch.ImageURL != "" {
+						existingSong.Metadata.ImageURL = bestMatch.ImageURL
+					}
+					
+					// Save the update
+					if err := c.songRepository.Update(enhanceCtx, existingSong); err != nil {
+						slog.Error("Failed to update song with search enhancement", "error", err)
+					} else {
+						slog.Info("Updated song with search enhancement",
+							"title", existingSong.Title,
+							"platform", platform.name)
+					}
+				}
+			}
 		}
 	}
 }
@@ -251,4 +375,27 @@ func abs(x int) int {
 		return -x
 	}
 	return x
+}
+
+// parseReleaseDate attempts to parse a release date string
+func parseReleaseDate(dateStr string) time.Time {
+	if dateStr == "" {
+		return time.Time{}
+	}
+
+	// Try common date formats
+	formats := []string{
+		"2006-01-02",
+		"2006-01-02T15:04:05Z",
+		"2006-01-02T15:04:05-07:00",
+		"2006",
+	}
+
+	for _, format := range formats {
+		if t, err := time.Parse(format, dateStr); err == nil {
+			return t
+		}
+	}
+
+	return time.Time{}
 }

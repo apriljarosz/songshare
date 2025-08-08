@@ -102,6 +102,53 @@ func (r *mongoSongRepository) FindByISRC(ctx context.Context, isrc string) (*mod
 	return &song, nil
 }
 
+// FindByISRCBatch finds multiple songs by their ISRC codes in a single query
+func (r *mongoSongRepository) FindByISRCBatch(ctx context.Context, isrcs []string) (map[string]*models.Song, error) {
+	if len(isrcs) == 0 {
+		return make(map[string]*models.Song), nil
+	}
+
+	// Remove duplicates and empty strings
+	uniqueISRCs := make(map[string]bool)
+	for _, isrc := range isrcs {
+		if isrc != "" {
+			uniqueISRCs[isrc] = true
+		}
+	}
+
+	// Convert to slice
+	isrcList := make([]string, 0, len(uniqueISRCs))
+	for isrc := range uniqueISRCs {
+		isrcList = append(isrcList, isrc)
+	}
+
+	// Query all songs with matching ISRCs
+	filter := bson.M{"isrc": bson.M{"$in": isrcList}}
+	cursor, err := r.collection.Find(ctx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find songs by ISRC batch: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	// Build result map
+	result := make(map[string]*models.Song)
+	for cursor.Next(ctx) {
+		var song models.Song
+		if err := cursor.Decode(&song); err != nil {
+			slog.Error("Failed to decode song in batch", "error", err)
+			continue
+		}
+		r.handleSchemaEvolution(&song)
+		result[song.ISRC] = &song
+	}
+
+	if err := cursor.Err(); err != nil {
+		return nil, fmt.Errorf("cursor error in ISRC batch query: %w", err)
+	}
+
+	return result, nil
+}
+
 // FindByTitleArtist finds songs by title and artist (fuzzy matching)
 func (r *mongoSongRepository) FindByTitleArtist(ctx context.Context, title, artist string) ([]*models.Song, error) {
 	// Create case-insensitive regex patterns
