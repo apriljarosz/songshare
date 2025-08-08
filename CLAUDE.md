@@ -85,7 +85,7 @@ go test -short ./...
 # Run integration tests (requires MongoDB & Valkey)
 go test -tags=integration ./test/integration/...
 
-# Run benchmarks
+# Run benchmarks (see Benchmarking section below for more options)
 go test -bench=. -benchmem ./...
 ```
 
@@ -112,6 +112,85 @@ go vet ./...         # Go's built-in analyzer
 # Maintenance tasks
 go run cmd/backfill-album-art/main.go  # Backfill missing album artwork
 ```
+
+### Benchmarking Commands
+
+The project includes comprehensive benchmarking for performance monitoring and optimization:
+
+```bash
+# Run all benchmarks
+make bench
+
+# Run specific benchmark categories
+make bench-service    # Service layer benchmarks
+make bench-cache      # Cache and repository benchmarks
+make bench-handler    # HTTP handler benchmarks
+
+# Run benchmarks with profiling
+make bench-cpu        # CPU profiling
+make bench-mem        # Memory profiling
+
+# Benchmark comparison and analysis
+make bench-save-base  # Save baseline for comparison
+make bench-compare    # Compare current run with baseline
+
+# Specific benchmark patterns
+make bench-resolution      # Song resolution service benchmarks
+make bench-platform       # Platform service benchmarks
+make bench-cached         # Cached repository benchmarks
+
+# Performance profiling and analysis
+./scripts/profile-analyze.sh cpu                    # CPU profiling
+./scripts/profile-analyze.sh memory                 # Memory profiling
+./scripts/profile-analyze.sh package internal/services  # Package-specific profiling
+./scripts/profile-analyze.sh comprehensive         # Full profiling suite
+
+# Benchmark monitoring over time
+./scripts/bench-monitor.sh run        # Run and save benchmarks
+./scripts/bench-monitor.sh compare    # Run and compare with previous
+./scripts/bench-monitor.sh trends     # Show performance trends
+./scripts/bench-monitor.sh report     # Generate performance report
+
+# Install benchmarking tools (one-time setup)
+go install golang.org/x/perf/cmd/benchstat@latest  # For benchmark comparison
+go install github.com/uber/go-torch@latest         # For flame graphs (optional)
+```
+
+#### Benchmark Coverage
+
+The benchmarking suite covers:
+
+- **Song Resolution Service**: Cross-platform resolution performance, search operations, multi-platform handling
+- **Cache Layer**: In-memory LRU cache, Valkey operations, cache hit/miss scenarios
+- **Repository Layer**: MongoDB operations, cached vs uncached access patterns
+- **Platform Services**: API call simulation, concurrent operations, latency handling
+- **HTTP Handlers**: Request/response throughput, JSON serialization, content negotiation
+
+#### Performance Profiling
+
+Use the profiling tools to identify bottlenecks:
+
+```bash
+# Generate CPU profile and analyze
+make bench-cpu
+go tool pprof benchmarks/profiles/cpu.prof
+
+# Generate memory profile  
+make bench-mem
+go tool pprof benchmarks/profiles/mem.prof
+
+# Comprehensive profiling with reports
+./scripts/profile-analyze.sh comprehensive
+```
+
+#### Benchmark Results Storage
+
+Benchmark results are stored in:
+- `benchmarks/` - Timestamped benchmark outputs
+- `benchmarks/profiles/` - CPU and memory profiles
+- `benchmarks/profiles/flamegraphs/` - Flame graph visualizations
+
+Use `make bench-compare` to track performance regressions between runs.
 
 ## Architecture Overview
 

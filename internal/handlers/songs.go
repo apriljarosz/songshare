@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"songshare/internal/handlers/render"
 	"songshare/internal/models"
@@ -121,11 +122,20 @@ func (h *SongHandler) ResolveSong(c *gin.Context) {
 
 	// Check if this is an HTMX request (for search page integration)
 	if c.GetHeader("HX-Request") == "true" {
-		// Return redirect URL in both header and body for JavaScript compatibility
+		// Return redirect URL with out-of-band badge updates
 		c.Header("HX-Redirect", response.UniversalLink)
-		c.JSON(http.StatusOK, gin.H{
-			"redirect": response.UniversalLink,
-		})
+		
+		// Generate OOB updates for all search results with the same ISRC
+		oobHTML := h.generateOOBBadgeUpdates(song)
+		
+		// Return JSON response with redirect and OOB HTML
+		responseHTML := fmt.Sprintf(`
+			<div id="resolve-result">{"redirect": "%s"}</div>
+			%s
+		`, response.UniversalLink, oobHTML)
+		
+		c.Header("Content-Type", "text/html")
+		c.String(http.StatusOK, responseHTML)
 		return
 	}
 
@@ -595,10 +605,17 @@ func (h *SongHandler) renderGroupedSearchResultsHTML(results []search.GroupedSea
 			html.WriteString(`</div>`)
 		}
 
-		// Platform badges (multiple platforms) - clickable badges that link directly to platforms
-		html.WriteString(fmt.Sprintf(`<div class="result-platforms" id="%s-platforms">`, result.ID))
+		// Platform badges (multiple platforms) with HTMX enhancement
+		html.WriteString(fmt.Sprintf(`<div class="result-platforms" id="%s-platforms"`, result.ID))
+		
+		// Add HTMX lazy loading for badge enhancement if we have an ISRC
+		if result.ISRC != "" {
+			html.WriteString(fmt.Sprintf(` hx-get="/api/v1/search/enhance-badges/%s" hx-trigger="load delay:500ms" hx-swap="outerHTML"`, result.ID))
+		}
+		
+		html.WriteString(`>`)
 
-		// Show clickable platform badges in alphabetical order
+		// Show initial clickable platform badges in alphabetical order
 		sortedPlatforms := make([]search.PlatformResult, 0)
 		for _, platform := range result.PlatformLinks {
 			// Skip the "local" fallback platform - we'll handle that separately
@@ -617,6 +634,11 @@ func (h *SongHandler) renderGroupedSearchResultsHTML(results []search.GroupedSea
 			// Use dynamic platform UI system for badges
 			badgeHTML := RenderPlatformBadge(platform.Platform, platform.URL)
 			html.WriteString(badgeHTML)
+		}
+
+		// Add loading indicator for HTMX enhancement
+		if result.ISRC != "" {
+			html.WriteString(`<div class="badge-loading" style="display:none; opacity: 0.7; font-size: 0.8em;">...</div>`)
 		}
 
 		// SongShare badge removed - users don't need to see this alongside platform badges
@@ -753,6 +775,144 @@ func (h *SongHandler) EnhancedPlatformBadges(c *gin.Context) {
 	}
 
 	c.String(http.StatusOK, html.String())
+}
+
+// EnhanceBadges returns enhanced platform badges for a search result with HTMX support
+func (h *SongHandler) EnhanceBadges(c *gin.Context) {
+	resultID := c.Param("resultId")
+
+	if resultID == "" {
+		c.String(http.StatusBadRequest, "Missing result ID")
+		return
+	}
+
+	// Extract ISRC from result ID if it follows the pattern "result-{ISRC}"
+	var isrc string
+	if strings.HasPrefix(resultID, "result-") {
+		potentialISRC := strings.TrimPrefix(resultID, "result-")
+		// Basic ISRC validation (should be 12 characters)
+		if len(potentialISRC) == 12 {
+			isrc = potentialISRC
+		}
+	}
+
+
+	if isrc == "" {
+		// Return loading indicator for now
+		c.String(http.StatusOK, `<div class="badge-loading">Discovering platforms...</div>`)
+		return
+	}
+
+	// Look for the song in our database (it might have been enhanced by now)
+	song, err := h.songRepository.FindByISRC(c.Request.Context(), isrc)
+	if err != nil || song == nil {
+		// Trigger background resolution if not found
+		go h.backgroundResolveByISRC(isrc)
+		c.String(http.StatusOK, `<div class="badge-loading">Resolving platforms...</div>`)
+		return
+	}
+
+	// Generate enhanced platform badges HTML with proper container structure
+	var badgesHTML strings.Builder
+
+	// Get all available platforms sorted alphabetically
+	var sortedPlatforms []models.PlatformLink
+	for _, link := range song.PlatformLinks {
+		if link.Available && link.URL != "" {
+			sortedPlatforms = append(sortedPlatforms, link)
+		}
+	}
+
+	// Sort by platform name
+	sort.Slice(sortedPlatforms, func(i, j int) bool {
+		return sortedPlatforms[i].Platform < sortedPlatforms[j].Platform
+	})
+
+	// Render badges
+	for _, platformLink := range sortedPlatforms {
+		badgeHTML := RenderPlatformBadge(platformLink.Platform, platformLink.URL)
+		badgesHTML.WriteString(badgeHTML)
+	}
+
+	// Return the complete platform container div with enhanced badges
+	html := fmt.Sprintf(`<div class="result-platforms" id="%s-platforms">%s</div>`, resultID, badgesHTML.String())
+
+	// If we have badges, add a small delay to show enhancement effect
+	if badgesHTML.Len() > 0 {
+		c.Header("HX-Trigger-After-Settle", "badgeEnhanced")
+	}
+
+	c.String(http.StatusOK, html)
+}
+
+// generateOOBBadgeUpdates creates out-of-band HTML updates for badge synchronization
+func (h *SongHandler) generateOOBBadgeUpdates(song *models.Song) string {
+	if song.ISRC == "" {
+		return ""
+	}
+
+	// Get all available platforms sorted alphabetically
+	var sortedPlatforms []models.PlatformLink
+	for _, link := range song.PlatformLinks {
+		if link.Available && link.URL != "" {
+			sortedPlatforms = append(sortedPlatforms, link)
+		}
+	}
+
+	// Sort by platform name
+	sort.Slice(sortedPlatforms, func(i, j int) bool {
+		return sortedPlatforms[i].Platform < sortedPlatforms[j].Platform
+	})
+
+	var html strings.Builder
+
+	// Generate the enhanced badges HTML
+	var badgesHTML strings.Builder
+	for _, platformLink := range sortedPlatforms {
+		badgeHTML := RenderPlatformBadge(platformLink.Platform, platformLink.URL)
+		badgesHTML.WriteString(badgeHTML)
+	}
+
+	// Create OOB update for the primary result (using ISRC-based ID)
+	resultID := "result-" + song.ISRC
+	html.WriteString(fmt.Sprintf(`
+		<div class="result-platforms" id="%s-platforms" hx-swap-oob="true">
+			%s
+		</div>
+	`, resultID, badgesHTML.String()))
+
+	return html.String()
+}
+
+// backgroundResolveByISRC attempts to resolve a song by ISRC in the background
+func (h *SongHandler) backgroundResolveByISRC(isrc string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Try to find the song on each platform using ISRC
+	platforms := []string{"spotify", "apple_music", "tidal"}
+	for _, platform := range platforms {
+		service := h.resolutionService.GetPlatformService(platform)
+		if service == nil {
+			continue
+		}
+
+		track, err := service.GetTrackByISRC(ctx, isrc)
+		if err != nil || track == nil {
+			continue
+		}
+
+		// Found a track! Try to resolve it fully
+		if track.URL != "" {
+			_, err := h.resolutionService.ResolveFromURL(ctx, track.URL)
+			if err != nil {
+				slog.Debug("Background resolution failed", "platform", platform, "isrc", isrc, "error", err)
+			} else {
+				slog.Debug("Background resolution successful", "platform", platform, "isrc", isrc)
+				break // Successfully resolved, stop trying other platforms
+			}
+		}
+	}
 }
 
 // generateSearchResultID creates a unique ID for a search result
