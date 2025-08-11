@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"time"
 
 	"github.com/joho/godotenv"
 	"songshare/internal/cache"
@@ -38,8 +37,8 @@ func main() {
 	}
 	defer db.Close(context.Background())
 
-	// Initialize cache
-	cache, err := cache.NewMultiLevelCache(cfg.ValkeyURL, 1000)
+	// Initialize simple cache
+	cache, err := cache.NewSimpleCache(cfg.ValkeyURL)
 	if err != nil {
 		slog.Error("Failed to initialize cache", "error", err)
 		os.Exit(1)
@@ -47,8 +46,8 @@ func main() {
 	defer cache.Close()
 
 	// Initialize platform services
-	spotifyService := services.NewSpotifyService(cfg.SpotifyClientID, cfg.SpotifyClientSecret, cache)
-	appleMusicService := services.NewAppleMusicService(cfg.AppleMusicKeyID, cfg.AppleMusicTeamID, cfg.AppleMusicKeyFile, cache)
+	_ = services.NewSpotifyService(cfg.SpotifyClientID, cfg.SpotifyClientSecret, cache)
+	_ = services.NewAppleMusicService(cfg.AppleMusicKeyID, cfg.AppleMusicTeamID, cfg.AppleMusicKeyFile, cache)
 
 	// Initialize repository
 	songRepo := repositories.NewMongoSongRepository(db)

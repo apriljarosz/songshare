@@ -64,28 +64,28 @@ func (d *Database) CreateIndexes(ctx context.Context) error {
 	// Create indexes
 	indexes := []mongo.IndexModel{
 		{
-			Keys:    bson.D{{"isrc", 1}},
+			Keys:    bson.D{{Key: "isrc", Value: 1}},
 			Options: options.Index().SetSparse(true),
 		},
 		{
-			Keys: bson.D{{"title", 1}, {"artist", 1}},
+			Keys: bson.D{{Key: "title", Value: 1}, {Key: "artist", Value: 1}},
 		},
 		{
-			Keys: bson.D{{"platform_links.platform", 1}, {"platform_links.external_id", 1}},
+			Keys: bson.D{{Key: "platform_links.platform", Value: 1}, {Key: "platform_links.external_id", Value: 1}},
 		},
 		{
 			Keys: bson.D{
-				{"title", "text"},
-				{"artist", "text"},
-				{"album", "text"},
+				{Key: "title", Value: "text"},
+				{Key: "artist", Value: "text"},
+				{Key: "album", Value: "text"},
 			},
 			Options: options.Index().SetDefaultLanguage("english"),
 		},
 		{
-			Keys: bson.D{{"created_at", 1}},
+			Keys: bson.D{{Key: "created_at", Value: 1}},
 		},
 		{
-			Keys: bson.D{{"updated_at", 1}},
+			Keys: bson.D{{Key: "updated_at", Value: 1}},
 		},
 	}
 

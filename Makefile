@@ -54,16 +54,18 @@ bench:
 bench-cpu:
 	@echo "Running benchmarks with CPU profiling..."
 	@mkdir -p benchmarks/profiles
-	go test -bench=. -benchmem -cpuprofile=benchmarks/profiles/cpu.prof -run=^$$ ./...
-	@echo "CPU profile saved to benchmarks/profiles/cpu.prof"
-	@echo "View with: go tool pprof benchmarks/profiles/cpu.prof"
+	@echo "Profiling cache..."
+	go test -bench=. -benchmem -cpuprofile=benchmarks/profiles/cpu_cache.prof -run=^$$ ./internal/cache/...
+	@echo "CPU profiles saved to benchmarks/profiles/"
+	@echo "View with: go tool pprof benchmarks/profiles/cpu_cache.prof"
 
 bench-mem:
 	@echo "Running benchmarks with memory profiling..."
 	@mkdir -p benchmarks/profiles
-	go test -bench=. -benchmem -memprofile=benchmarks/profiles/mem.prof -run=^$$ ./...
-	@echo "Memory profile saved to benchmarks/profiles/mem.prof"
-	@echo "View with: go tool pprof benchmarks/profiles/mem.prof"
+	@echo "Profiling cache..."
+	go test -bench=. -benchmem -memprofile=benchmarks/profiles/mem_cache.prof -run=^$$ ./internal/cache/...
+	@echo "Memory profiles saved to benchmarks/profiles/"
+	@echo "View with: go tool pprof benchmarks/profiles/mem_cache.prof"
 
 bench-service:
 	@echo "Running service benchmarks..."
@@ -71,9 +73,9 @@ bench-service:
 	go test -bench=. -benchmem -run=^$$ ./internal/services/... | tee benchmarks/bench_services_$(shell date +%Y%m%d_%H%M%S).txt
 
 bench-cache:
-	@echo "Running cache and repository benchmarks..."
+	@echo "Running cache benchmarks..."
 	@mkdir -p benchmarks
-	go test -bench=. -benchmem -run=^$$ ./internal/cache/... ./internal/repositories/... | tee benchmarks/bench_cache_$(shell date +%Y%m%d_%H%M%S).txt
+	go test -bench=. -benchmem -run=^$$ ./internal/cache/... | tee benchmarks/bench_cache_$(shell date +%Y%m%d_%H%M%S).txt
 
 bench-handler:
 	@echo "Running handler benchmarks..."

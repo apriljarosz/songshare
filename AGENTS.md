@@ -3,40 +3,42 @@
 ## Build/Test/Lint Commands
 ```bash
 # Run all tests
-go test ./...
+go test ./... OR make test
 
-# Run single test file
-go test ./internal/services/song_resolution_service_test.go
+# Run single test file  
+go test ./internal/services/platform_service_test.go
 
 # Run specific test function
 go test -run TestFunctionName ./path/to/package
 
 # Run with coverage
-go test -cover ./...
+go test -cover ./... OR make test-coverage
 
 # Lint code (required before commits)
-golangci-lint run
+golangci-lint run OR make lint
 
 # Format code
-go fmt ./... && gofmt -s -w .
+go fmt ./... && gofmt -s -w . OR make fmt
 
 # Build application
-go build -o songshare ./cmd/server
+go build -o songshare ./cmd/server OR make build
 
 # Run with hot reload (development)
-air
+air OR make dev
 ```
 
 ## Code Style Guidelines
 
 **Imports**: Use `goimports` formatting. Group stdlib, external, then internal packages with blank lines between groups.
 
-**Naming**: Use camelCase for variables/functions, PascalCase for exported types. Acronyms like ISRC, URL, API stay uppercase.
+**Naming**: Use descriptive names for exported identifiers. Avoid abbreviations. Acronyms like ISRC, URL, API stay uppercase.
 
-**Error Handling**: Always wrap errors with context using `fmt.Errorf("description: %w", err)`. Use structured logging with `slog`.
+**Error Handling**: Always wrap errors with context using `fmt.Errorf("description: %w", err)`. Return sentinel/wrapped errors; avoid deep logging.
 
-**Types**: Use explicit types for struct fields with proper JSON/BSON tags. Prefer interfaces for dependencies (e.g., `repositories.SongRepository`).
+**Context**: Always thread `context.Context` from handlers → services → repositories. Never store contexts in structs.
 
-**Testing**: Use testify for assertions (`assert`, `require`). Mock interfaces with testify/mock. Test files end with `_test.go`.
+**Types**: Use explicit types for struct fields with proper JSON/BSON tags. Define small, behavior-focused interfaces near consumers.
 
-**Comments**: Document exported functions/types. Use `//` for single line, avoid block comments unless necessary.
+**Testing**: Use helpers in `internal/testutil/`. Integration tests in `test/integration/`. Mock external calls via interfaces.
+
+**Control Flow**: Prefer guard clauses and early returns. Handle edge cases first. Avoid deep nesting.

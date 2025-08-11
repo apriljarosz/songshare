@@ -66,6 +66,7 @@ type SearchResult struct {
 	Available   bool     `json:"available"`
 }
 
+
 // SongRenderer handles rendering song responses in different formats
 type SongRenderer struct {
 	baseURL string

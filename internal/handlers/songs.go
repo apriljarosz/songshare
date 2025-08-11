@@ -2,22 +2,18 @@ package handlers
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"songshare/internal/handlers/render"
 	"songshare/internal/models"
 	"songshare/internal/repositories"
-	"songshare/internal/scoring"
-	"songshare/internal/search"
 	"songshare/internal/services"
 
 	"github.com/gin-gonic/gin"
@@ -44,25 +40,77 @@ type SearchSongsResponse struct {
 	Query   SearchSongsRequest               `json:"query"`   // Echo back the query for reference
 }
 
+// Simple search cache entry
+type searchCacheEntry struct {
+	results   []render.SearchResult
+	timestamp time.Time
+}
+
+// Simple search cache (5-minute TTL)
+type searchCache struct {
+	entries map[string]searchCacheEntry
+	mu      sync.RWMutex
+	ttl     time.Duration
+}
+
+func newSearchCache() *searchCache {
+	return &searchCache{
+		entries: make(map[string]searchCacheEntry),
+		ttl:     5 * time.Minute,
+	}
+}
+
+func (sc *searchCache) get(key string) ([]render.SearchResult, bool) {
+	sc.mu.RLock()
+	defer sc.mu.RUnlock()
+	
+	entry, exists := sc.entries[key]
+	if !exists || time.Since(entry.timestamp) > sc.ttl {
+		return nil, false
+	}
+	return entry.results, true
+}
+
+func (sc *searchCache) set(key string, results []render.SearchResult) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	
+	sc.entries[key] = searchCacheEntry{
+		results:   results,
+		timestamp: time.Now(),
+	}
+	
+	// Clean up old entries periodically (simple cleanup)
+	if len(sc.entries) > 1000 {
+		for k, v := range sc.entries {
+			if time.Since(v.timestamp) > sc.ttl {
+				delete(sc.entries, k)
+			}
+		}
+	}
+}
+
 // SongHandler handles song-related requests
 type SongHandler struct {
-	resolutionService *services.SongResolutionService
 	songRepository    repositories.SongRepository
 	baseURL           string
 	renderer          *render.SongRenderer
-	searchCoordinator *search.Coordinator
-	scorer            *scoring.RelevanceScorer
+	spotifyService    services.PlatformService
+	appleMusicService services.PlatformService
+	tidalService      services.PlatformService
+	searchCache       *searchCache
 }
 
 // NewSongHandler creates a new song handler
-func NewSongHandler(resolutionService *services.SongResolutionService, songRepository repositories.SongRepository, baseURL string) *SongHandler {
+func NewSongHandler(songRepository repositories.SongRepository, baseURL string, spotifyService, appleMusicService, tidalService services.PlatformService) *SongHandler {
 	return &SongHandler{
-		resolutionService: resolutionService,
 		songRepository:    songRepository,
 		baseURL:           baseURL,
 		renderer:          render.NewSongRenderer(baseURL),
-		searchCoordinator: search.NewCoordinator(songRepository, resolutionService, baseURL),
-		scorer:            scoring.NewRelevanceScorer(),
+		spotifyService:    spotifyService,
+		appleMusicService: appleMusicService,
+		tidalService:      tidalService,
+		searchCache:       newSearchCache(),
 	}
 }
 
@@ -77,8 +125,41 @@ func (h *SongHandler) ResolveSong(c *gin.Context) {
 		return
 	}
 
-	// Resolve the song from the URL
-	song, err := h.resolutionService.ResolveFromURL(c.Request.Context(), req.URL)
+	// Parse the platform URL
+	platform, trackID, err := services.ParsePlatformURL(req.URL)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid platform URL",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Get the platform service
+	var platformService services.PlatformService
+	switch platform {
+	case "spotify":
+		platformService = h.spotifyService
+	case "apple_music":
+		platformService = h.appleMusicService
+	case "tidal":
+		platformService = h.tidalService
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Unsupported platform: " + platform,
+		})
+		return
+	}
+
+	if platformService == nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Platform service not available: " + platform,
+		})
+		return
+	}
+
+	// Resolve the song
+	song, err := h.resolveSongFromPlatform(c.Request.Context(), platformService, trackID)
 	if err != nil {
 		slog.Error("Failed to resolve song", "url", req.URL, "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -108,7 +189,7 @@ func (h *SongHandler) ResolveSong(c *gin.Context) {
 			ImageURL:    song.Metadata.ImageURL,
 		},
 		Platforms:     make(map[string]render.PlatformLink),
-		UniversalLink: h.buildUniversalLink(song), // ISRC-based universal links
+		UniversalLink: fmt.Sprintf("%s/s/%s", h.baseURL, song.ISRC), // ISRC-based universal links
 	}
 
 	// Add platform links
@@ -126,7 +207,7 @@ func (h *SongHandler) ResolveSong(c *gin.Context) {
 		c.Header("HX-Redirect", response.UniversalLink)
 		
 		// Generate OOB updates for all search results with the same ISRC
-		oobHTML := h.generateOOBBadgeUpdates(song)
+		oobHTML := "" // Simplified: no out-of-band badge updates
 		
 		// Return JSON response with redirect and OOB HTML
 		responseHTML := fmt.Sprintf(`
@@ -166,16 +247,22 @@ func (h *SongHandler) SearchSongs(c *gin.Context) {
 		req.Limit = 10
 	}
 	if req.Limit > 50 {
-		req.Limit = 50 // Cap at 50 results per platform
+		req.Limit = 50
 	}
 
-	// Build search query
-	searchQuery := services.SearchQuery{
-		Title:  req.Title,
-		Artist: req.Artist,
-		Album:  req.Album,
-		Query:  req.Query,
-		Limit:  req.Limit,
+	// Build search query string (use Query first, then combine Title + Artist)
+	var searchTerm string
+	if req.Query != "" {
+		searchTerm = req.Query
+	} else if req.Title != "" && req.Artist != "" {
+		searchTerm = req.Title + " " + req.Artist
+		if req.Album != "" {
+			searchTerm += " " + req.Album
+		}
+	} else if req.Title != "" {
+		searchTerm = req.Title
+	} else {
+		searchTerm = req.Artist
 	}
 
 	response := SearchSongsResponse{
@@ -183,68 +270,130 @@ func (h *SongHandler) SearchSongs(c *gin.Context) {
 		Query:   req,
 	}
 
-	// Search platforms based on filter
-	platforms := []string{}
-	if req.Platform == "" {
-		platforms = []string{"apple_music", "spotify", "tidal"} // All platforms
-	} else if req.Platform == "spotify" || req.Platform == "apple_music" || req.Platform == "tidal" {
-		platforms = []string{req.Platform}
+	// Search local database first
+	localSongs, err := h.songRepository.Search(c.Request.Context(), searchTerm, req.Limit)
+	if err != nil {
+		slog.Error("Local search failed", "error", err)
 	} else {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid platform. Use 'spotify', 'apple_music', 'tidal', or omit for all",
-		})
-		return
+		localResults := make([]render.SearchResult, 0, len(localSongs))
+		for _, song := range localSongs {
+			// Create universal link for local songs
+			universalLink := fmt.Sprintf("%s/s/%s", h.baseURL, song.ISRC)
+			if song.ISRC == "" {
+				universalLink = fmt.Sprintf("%s/s/%s", h.baseURL, song.ID.Hex()[:8])
+			}
+			
+			localResults = append(localResults, render.SearchResult{
+				Title:       song.Title,
+				Artists:     []string{song.Artist},
+				Album:       song.Album,
+				URL:         universalLink,
+				Platform:    "local",
+				ISRC:        song.ISRC,
+				DurationMs:  song.Metadata.Duration,
+				ReleaseDate: song.Metadata.ReleaseDate.Format("2006-01-02"),
+				ImageURL:    song.Metadata.ImageURL,
+				Available:   true,
+			})
+		}
+		response.Results["local"] = localResults
 	}
 
-	// Search each platform
-	for _, platform := range platforms {
-		var platformService services.PlatformService
+	// Search platform services concurrently with caching
+	platformServices := map[string]services.PlatformService{
+		"spotify":     h.spotifyService,
+		"apple_music": h.appleMusicService,
+		"tidal":       h.tidalService,
+	}
 
-		// Get the appropriate service
-		switch platform {
-		case "spotify":
-			platformService = h.resolutionService.GetPlatformService("spotify")
-		case "apple_music":
-			platformService = h.resolutionService.GetPlatformService("apple_music")
-		case "tidal":
-			platformService = h.resolutionService.GetPlatformService("tidal")
-		default:
+	// Use channels and goroutines for concurrent search
+	type platformResult struct {
+		platform string
+		results  []render.SearchResult
+		err      error
+	}
+
+	resultsChan := make(chan platformResult, 3)
+	var wg sync.WaitGroup
+
+	for platform, service := range platformServices {
+		// Skip if platform filter specified and doesn't match
+		if req.Platform != "" && req.Platform != platform {
+			continue
+		}
+		
+		if service == nil {
 			continue
 		}
 
-		if platformService == nil {
-			slog.Warn("Platform service not available", "platform", platform)
-			continue
-		}
+		wg.Add(1)
+		go func(platform string, service services.PlatformService) {
+			defer wg.Done()
 
-		// Perform search
-		tracks, err := platformService.SearchTrack(c.Request.Context(), searchQuery)
-		if err != nil {
-			slog.Error("Search failed for platform", "platform", platform, "error", err)
-			// Continue with other platforms instead of failing entirely
-			response.Results[platform] = []render.SearchResult{}
-			continue
-		}
-
-		// Convert tracks to search results
-		results := make([]render.SearchResult, len(tracks))
-		for i, track := range tracks {
-			results[i] = render.SearchResult{
-				Title:       track.Title,
-				Artists:     track.Artists,
-				Album:       track.Album,
-				URL:         track.URL,
-				Platform:    track.Platform,
-				ISRC:        track.ISRC,
-				DurationMs:  track.Duration,
-				ReleaseDate: track.ReleaseDate,
-				ImageURL:    track.ImageURL,
-				Explicit:    track.Explicit,
-				Available:   track.Available,
+			// Check cache first
+			cacheKey := fmt.Sprintf("%s:%s:%d", platform, searchTerm, req.Limit)
+			if cached, found := h.searchCache.get(cacheKey); found {
+				resultsChan <- platformResult{platform: platform, results: cached}
+				return
 			}
-		}
 
-		response.Results[platform] = results
+			// Create platform search query
+			searchQuery := services.SearchQuery{
+				Title:  req.Title,
+				Artist: req.Artist,
+				Album:  req.Album,
+				Query:  searchTerm,
+				Limit:  req.Limit,
+			}
+
+			// Search with timeout
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+			defer cancel()
+
+			tracks, err := service.SearchTrack(ctx, searchQuery)
+			if err != nil {
+				resultsChan <- platformResult{platform: platform, err: err}
+				return
+			}
+
+			// Convert to render format
+			results := make([]render.SearchResult, 0, len(tracks))
+			for _, track := range tracks {
+				results = append(results, render.SearchResult{
+					Title:       track.Title,
+					Artists:     track.Artists,
+					Album:       track.Album,
+					URL:         track.URL,
+					Platform:    platform,
+					ISRC:        track.ISRC,
+					DurationMs:  track.Duration,
+					ReleaseDate: track.ReleaseDate,
+					ImageURL:    track.ImageURL,
+					Explicit:    track.Explicit,
+					Available:   track.Available,
+				})
+			}
+
+			// Cache the results
+			h.searchCache.set(cacheKey, results)
+			resultsChan <- platformResult{platform: platform, results: results}
+		}(platform, service)
+	}
+
+	// Close channel when all goroutines complete
+	go func() {
+		wg.Wait()
+		close(resultsChan)
+	}()
+
+	// Collect results
+	for result := range resultsChan {
+		if result.err != nil {
+			slog.Error("Platform search failed", "platform", result.platform, "error", result.err)
+			response.Results[result.platform] = []render.SearchResult{}
+		} else {
+			response.Results[result.platform] = result.results
+		}
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -339,9 +488,9 @@ func (h *SongHandler) backfillAlbumArt(ctx context.Context, song *models.Song) *
 		var platformService services.PlatformService
 		switch link.Platform {
 		case "spotify":
-			platformService = h.resolutionService.GetPlatformService("spotify")
+			platformService = h.spotifyService
 		case "apple_music":
-			platformService = h.resolutionService.GetPlatformService("apple_music")
+			platformService = h.appleMusicService
 		default:
 			continue
 		}
@@ -402,12 +551,11 @@ func (h *SongHandler) SearchPage(c *gin.Context) {
 	h.renderer.RenderSearchPage(c, query)
 }
 
-// SearchResults handles GET /api/v1/search/results and returns HTML fragments
+// SearchResults handles GET /api/v1/search/results and returns simple HTML fragments
 func (h *SongHandler) SearchResults(c *gin.Context) {
 	query := strings.TrimSpace(c.Query("q"))
 	platform := strings.TrimSpace(c.Query("platform"))
 	limitStr := c.Query("limit")
-	sortBy := strings.ToLower(strings.TrimSpace(c.Query("sort")))
 
 	// Parse limit
 	limit := 10
@@ -422,510 +570,598 @@ func (h *SongHandler) SearchResults(c *gin.Context) {
 		return
 	}
 
-	// Search all sources using coordinator
-	allResults, err := h.searchCoordinator.SearchAll(c.Request.Context(), query, platform, limit)
-	if err != nil {
-		slog.Error("Search failed", "error", err, "query", query)
-		c.String(http.StatusOK, `<div class="no-results"><p>Search temporarily unavailable. Please try again.</p></div>`)
-		return
+	// Use the same search logic as SearchSongs but return HTML
+	req := SearchSongsRequest{
+		Query:    query,
+		Platform: platform,
+		Limit:    limit,
 	}
 
-	if len(allResults) == 0 {
+	// Perform the search using our simplified search logic
+	searchResponse := h.performSearch(c.Request.Context(), req)
+
+	// Convert to HTML
+	if len(searchResponse.Results) == 0 {
 		c.String(http.StatusOK, `<div class="no-results"><p>No songs found for "%s". Try a different search term.</p></div>`, query)
 		return
 	}
 
-	// Group results by song
-	includeDebug := strings.EqualFold(c.Query("debug"), "1") || strings.EqualFold(c.Query("debug"), "true")
-	groupedResults := h.searchCoordinator.GroupResults(allResults, query, includeDebug)
-
-	// Optional client-controlled sorting
-	switch sortBy {
-	case "popular", "popularity":
-		sort.SliceStable(groupedResults, func(i, j int) bool {
-			if groupedResults[i].Popularity != groupedResults[j].Popularity {
-				return groupedResults[i].Popularity > groupedResults[j].Popularity
-			}
-			// fall back to relevance order
-			return groupedResults[i].RelevanceScore > groupedResults[j].RelevanceScore
-		})
-	default:
-		// keep relevance-based order
-	}
-
-	// Start background enhancements
-	go h.searchCoordinator.EnhanceResultsPlatforms(c.Request.Context(), groupedResults)
-
-	// Background indexing of platform results
-	var platformResults []render.SearchResult
-	for _, result := range allResults {
-		if result.Source == "platform" {
-			platformResults = append(platformResults, result.SearchResult)
-		}
-	}
-	if len(platformResults) > 0 {
-		go h.searchCoordinator.BackgroundIndexTracks(query, platformResults)
-	}
-
-	// Generate HTML for grouped results
-	html := h.renderGroupedSearchResultsHTML(groupedResults)
+	html := h.renderSearchResultsHTML(searchResponse.Results)
 	c.String(http.StatusOK, html)
 }
 
-// searchLocalSongs searches the local MongoDB database
-
-// searchPlatforms searches external platforms
-
-// renderSearchResultsHTML generates HTML for search results
-
-// groupSearchResults groups search results by song, combining multiple platform entries
-
-// generateSongKey creates a unique key for grouping songs
-func (h *SongHandler) generateSongKey(result render.SearchResult) string {
-	// Primary: Group by ISRC if available - this preserves different versions (clean vs explicit)
-	if result.ISRC != "" {
-		return "isrc:" + result.ISRC
-	}
-
-	// Secondary: Group by normalized title + artist + album to distinguish different releases
-	normalizedTitle := h.normalizeString(result.Title)
-	normalizedArtists := h.normalizeString(strings.Join(result.Artists, ", "))
-	normalizedAlbum := h.normalizeString(result.Album)
-
-	key := "song:" + normalizedTitle + "|" + normalizedArtists + "|" + normalizedAlbum
-
-	// Debug logging disabled - can be re-enabled for troubleshooting
-	// slog.Debug("Generated song key", "title", result.Title, "key", key)
-
-	return key
-}
-
-// normalizeString normalizes a string for comparison (lowercase, trim, etc.)
-func (h *SongHandler) normalizeString(s string) string {
-	// Convert to lowercase and trim spaces
-	normalized := strings.ToLower(strings.TrimSpace(s))
-
-	// Remove common variations that might cause false negatives
-	normalized = strings.ReplaceAll(normalized, "feat.", "ft.")
-	normalized = strings.ReplaceAll(normalized, "featuring", "ft.")
-	normalized = strings.ReplaceAll(normalized, " ft ", " ft. ")
-
-	// Remove punctuation that might differ between platforms
-	// (Keep it simple for now - Unicode handling can be complex)
-
-	// Remove extra spaces
-	normalized = strings.Join(strings.Fields(normalized), " ")
-
-	return normalized
-}
-
-// convertToScoringSearchResult converts a handler SearchResult to scoring package SearchResult
-func (h *SongHandler) convertToScoringSearchResult(result render.SearchResult) scoring.SearchResult {
-	return scoring.SearchResult{
-		Platform:    result.Platform,
-		ExternalID:  "", // Handler SearchResult doesn't have ExternalID field
-		URL:         result.URL,
-		Title:       result.Title,
-		Artists:     result.Artists,
-		Album:       result.Album,
-		ISRC:        result.ISRC,
-		DurationMs:  result.DurationMs,
-		ReleaseDate: result.ReleaseDate,
-		ImageURL:    result.ImageURL,
-		Popularity:  result.Popularity,
-		Explicit:    result.Explicit,
-		Available:   result.Available,
-	}
-}
-
-// convertToScoringSearchResultsWithSource converts handler render.SearchResultWithSource slice to scoring package slice
-func (h *SongHandler) convertToScoringSearchResultsWithSource(results []render.SearchResultWithSource) []scoring.SearchResultWithSource {
-	scoringResults := make([]scoring.SearchResultWithSource, len(results))
-	for i, result := range results {
-		scoringResults[i] = scoring.SearchResultWithSource{
-			SearchResult: h.convertToScoringSearchResult(result.SearchResult),
-			Source:       result.Source,
+// performSearch extracts the search logic from SearchSongs for reuse
+func (h *SongHandler) performSearch(ctx context.Context, req SearchSongsRequest) SearchSongsResponse {
+	// Build search term
+	var searchTerm string
+	if req.Query != "" {
+		searchTerm = req.Query
+	} else if req.Title != "" && req.Artist != "" {
+		searchTerm = req.Title + " " + req.Artist
+		if req.Album != "" {
+			searchTerm += " " + req.Album
 		}
-	}
-	return scoringResults
-}
-
-// renderGroupedSearchResultsHTML generates HTML for grouped search results
-func (h *SongHandler) renderGroupedSearchResultsHTML(results []search.GroupedSearchResult) string {
-	if len(results) == 0 {
-		return `<div class="no-results"><p>No songs found.</p></div>`
-	}
-
-	var html strings.Builder
-	html.WriteString(`<div class="search-results-container">`)
-
-	for _, result := range results {
-		// Start result item with unique ID for progressive enhancement
-		html.WriteString(fmt.Sprintf(`<div class="result-item" id="%s">`, result.ID))
-
-		// Album art or placeholder
-		if result.ImageURL != "" {
-			html.WriteString(fmt.Sprintf(`<img src="%s" alt="Album art" class="result-image">`, result.ImageURL))
-		} else {
-			html.WriteString(`<div class="result-image-placeholder">🎵</div>`)
-		}
-
-		// Content
-		html.WriteString(`<div class="result-content">`)
-		titleHTML := result.Title
-		if result.Explicit {
-			titleHTML += ` 🅴`
-		}
-		html.WriteString(fmt.Sprintf(`<div class="result-title">%s</div>`, titleHTML))
-		html.WriteString(fmt.Sprintf(`<div class="result-artist">%s</div>`, strings.Join(result.Artists, ", ")))
-		if result.Album != "" {
-			html.WriteString(fmt.Sprintf(`<div class="result-album">%s</div>`, result.Album))
-		}
-
-		// If debug breakdown present, render it
-		if result.Debug != nil {
-			html.WriteString(`<div class="result-debug">`)
-			html.WriteString(fmt.Sprintf(`<div>Text: %.1f</div>`, result.Debug.TextMatch))
-			html.WriteString(fmt.Sprintf(`<div>Popularity input: %d</div>`, result.Debug.PopularityInput))
-			html.WriteString(fmt.Sprintf(`<div>Popularity boost: %.1f</div>`, result.Debug.PopularityBoost))
-			html.WriteString(fmt.Sprintf(`<div>Context: %.1f</div>`, result.Debug.Context))
-			html.WriteString(fmt.Sprintf(`<div>Final: %.1f</div>`, result.Debug.Final))
-			if len(result.DebugPlatformPops) > 0 {
-				html.WriteString(`<div>Per-platform popularity:</div>`)
-				for p, v := range result.DebugPlatformPops {
-					html.WriteString(fmt.Sprintf(`<div>&nbsp;&nbsp;%s: %d</div>`, p, v))
-				}
-				if result.DebugRepPlatform != "" {
-					html.WriteString(fmt.Sprintf(`<div>Rep platform: %s</div>`, result.DebugRepPlatform))
-				}
-				if result.DebugAggPopularity > 0 {
-					html.WriteString(fmt.Sprintf(`<div>Aggregate popularity: %d</div>`, result.DebugAggPopularity))
-				}
-			}
-			html.WriteString(`</div>`)
-		}
-
-		// Platform badges (multiple platforms) with HTMX enhancement
-		html.WriteString(fmt.Sprintf(`<div class="result-platforms" id="%s-platforms"`, result.ID))
-		
-		// Add HTMX lazy loading for badge enhancement if we have an ISRC
-		if result.ISRC != "" {
-			html.WriteString(fmt.Sprintf(` hx-get="/api/v1/search/enhance-badges/%s" hx-trigger="load delay:500ms" hx-swap="outerHTML"`, result.ID))
-		}
-		
-		html.WriteString(`>`)
-
-		// Show initial clickable platform badges in alphabetical order
-		sortedPlatforms := make([]search.PlatformResult, 0)
-		for _, platform := range result.PlatformLinks {
-			// Skip the "local" fallback platform - we'll handle that separately
-			if platform.Platform == "local" {
-				continue
-			}
-			sortedPlatforms = append(sortedPlatforms, platform)
-		}
-
-		// Sort platforms alphabetically
-		sort.Slice(sortedPlatforms, func(i, j int) bool {
-			return sortedPlatforms[i].Platform < sortedPlatforms[j].Platform
-		})
-
-		for _, platform := range sortedPlatforms {
-			// Use dynamic platform UI system for badges
-			badgeHTML := RenderPlatformBadge(platform.Platform, platform.URL)
-			html.WriteString(badgeHTML)
-		}
-
-		// Add loading indicator for HTMX enhancement
-		if result.ISRC != "" {
-			html.WriteString(`<div class="badge-loading" style="display:none; opacity: 0.7; font-size: 0.8em;">...</div>`)
-		}
-
-		// SongShare badge removed - users don't need to see this alongside platform badges
-
-		html.WriteString(`</div>`)
-
-		html.WriteString(`</div>`) // End content
-
-		// Actions - simplified with only primary action
-		html.WriteString(`<div class="result-actions">`)
-
-		// Primary action: View local link if available, otherwise create universal link
-		if result.HasLocalLink {
-			html.WriteString(fmt.Sprintf(`<a href="%s" class="action-btn action-primary">Share</a>`, result.LocalURL))
-		} else {
-			// Find the first platform alphabetically to create a universal link from
-			var firstPlatformURL string
-			var firstPlatformName string
-			for _, platform := range result.PlatformLinks {
-				if platform.Source == "platform" {
-					// Use the first platform alphabetically
-					if firstPlatformName == "" || platform.Platform < firstPlatformName {
-						firstPlatformName = platform.Platform
-						firstPlatformURL = platform.URL
-					}
-				}
-			}
-
-			if firstPlatformURL != "" {
-				html.WriteString(fmt.Sprintf(`
-					<button class="action-btn action-primary" 
-					        onclick="createShareLink('%s', this)">
-						Share
-					</button>
-				`, firstPlatformURL))
-			}
-		}
-
-		html.WriteString(`</div>`) // End actions
-
-		html.WriteString(`</div>`) // End result item
-	}
-
-	html.WriteString(`</div>`) // End container
-	return html.String()
-} // backgroundIndexTracks performs intelligent background indexing of search results
-
-// buildUniversalLink creates a universal link for a song using ISRC
-func (h *SongHandler) buildUniversalLink(song *models.Song) string {
-	if song.ISRC == "" {
-		slog.Warn("Song missing ISRC", "songID", song.ID.Hex(), "title", song.Title)
-		// This shouldn't happen with properly indexed songs
-		return fmt.Sprintf("%s/s/unknown", h.baseURL)
-	}
-	return fmt.Sprintf("%s/s/%s", h.baseURL, song.ISRC)
-}
-
-// findSongByISRC finds a song by ISRC
-func (h *SongHandler) findSongByISRC(ctx context.Context, isrc string) (*models.Song, error) {
-	song, err := h.songRepository.FindByISRC(ctx, isrc)
-	if err != nil {
-		return nil, fmt.Errorf("song not found for ISRC %s: %w", isrc, err)
-	}
-	if song == nil {
-		return nil, fmt.Errorf("song not found for ISRC: %s", isrc)
-	}
-	return song, nil
-}
-
-// invalidateSearchCache invalidates cached search results for a query
-func (h *SongHandler) invalidateSearchCache(query string) {
-	// Invalidate the search cache for this specific query
-	// This integrates with our cached repository pattern
-	if cachedRepo, ok := h.songRepository.(interface {
-		InvalidateSearchCache(query string)
-	}); ok {
-		cachedRepo.InvalidateSearchCache(query)
-		slog.Debug("Invalidated search cache", "query", query)
+	} else if req.Title != "" {
+		searchTerm = req.Title
 	} else {
-		slog.Debug("Repository doesn't support cache invalidation", "query", query)
-	}
-}
-
-// EnhancedPlatformBadges returns enhanced platform badges for a search result
-func (h *SongHandler) EnhancedPlatformBadges(c *gin.Context) {
-	resultID := c.Param("resultId")
-
-	if resultID == "" {
-		c.String(http.StatusBadRequest, "Missing result ID")
-		return
+		searchTerm = req.Artist
 	}
 
-	// Extract ISRC from result ID if it follows the pattern "result-{ISRC}"
-	var isrc string
-	if strings.HasPrefix(resultID, "result-") {
-		potentialISRC := strings.TrimPrefix(resultID, "result-")
-		// Basic ISRC validation (should be 12 characters)
-		if len(potentialISRC) == 12 {
-			isrc = potentialISRC
+	response := SearchSongsResponse{
+		Results: make(map[string][]render.SearchResult),
+		Query:   req,
+	}
+
+	// Search local database first
+	if localSongs, err := h.songRepository.Search(ctx, searchTerm, req.Limit); err == nil {
+		localResults := make([]render.SearchResult, 0, len(localSongs))
+		for _, song := range localSongs {
+			universalLink := fmt.Sprintf("%s/s/%s", h.baseURL, song.ISRC)
+			if song.ISRC == "" {
+				universalLink = fmt.Sprintf("%s/s/%s", h.baseURL, song.ID.Hex()[:8])
+			}
+			
+			localResults = append(localResults, render.SearchResult{
+				Title:       song.Title,
+				Artists:     []string{song.Artist},
+				Album:       song.Album,
+				URL:         universalLink,
+				Platform:    "local",
+				ISRC:        song.ISRC,
+				DurationMs:  song.Metadata.Duration,
+				ReleaseDate: song.Metadata.ReleaseDate.Format("2006-01-02"),
+				ImageURL:    song.Metadata.ImageURL,
+				Available:   true,
+			})
 		}
+		response.Results["local"] = localResults
 	}
 
-	if isrc == "" {
-		c.String(http.StatusOK, "") // Return empty if we can't enhance
-		return
+	// Search platforms concurrently (same logic as SearchSongs)
+	platformServices := map[string]services.PlatformService{
+		"spotify":     h.spotifyService,
+		"apple_music": h.appleMusicService,
+		"tidal":       h.tidalService,
 	}
 
-	// Look for the song in our database (it might have been enhanced by now)
-	song, err := h.songRepository.FindByISRC(c.Request.Context(), isrc)
-	if err != nil || song == nil {
-		c.String(http.StatusOK, "") // Return empty if not found
-		return
+	type platformResult struct {
+		platform string
+		results  []render.SearchResult
+		err      error
 	}
 
-	// Generate platform badges HTML for all available platforms
-	var html strings.Builder
+	resultsChan := make(chan platformResult, 3)
+	var wg sync.WaitGroup
 
-	// Get all available platforms sorted alphabetically
-	var sortedPlatforms []models.PlatformLink
-	for _, link := range song.PlatformLinks {
-		if link.Available && link.URL != "" {
-			sortedPlatforms = append(sortedPlatforms, link)
+	for platform, service := range platformServices {
+		if req.Platform != "" && req.Platform != platform {
+			continue
 		}
-	}
-
-	// Sort by platform name
-	sort.Slice(sortedPlatforms, func(i, j int) bool {
-		return sortedPlatforms[i].Platform < sortedPlatforms[j].Platform
-	})
-
-	for _, platformLink := range sortedPlatforms {
-		badgeHTML := RenderPlatformBadge(platformLink.Platform, platformLink.URL)
-		html.WriteString(badgeHTML)
-	}
-
-	c.String(http.StatusOK, html.String())
-}
-
-// EnhanceBadges returns enhanced platform badges for a search result with HTMX support
-func (h *SongHandler) EnhanceBadges(c *gin.Context) {
-	resultID := c.Param("resultId")
-
-	if resultID == "" {
-		c.String(http.StatusBadRequest, "Missing result ID")
-		return
-	}
-
-	// Extract ISRC from result ID if it follows the pattern "result-{ISRC}"
-	var isrc string
-	if strings.HasPrefix(resultID, "result-") {
-		potentialISRC := strings.TrimPrefix(resultID, "result-")
-		// Basic ISRC validation (should be 12 characters)
-		if len(potentialISRC) == 12 {
-			isrc = potentialISRC
-		}
-	}
-
-
-	if isrc == "" {
-		// Return loading indicator for now
-		c.String(http.StatusOK, `<div class="badge-loading">Discovering platforms...</div>`)
-		return
-	}
-
-	// Look for the song in our database (it might have been enhanced by now)
-	song, err := h.songRepository.FindByISRC(c.Request.Context(), isrc)
-	if err != nil || song == nil {
-		// Trigger background resolution if not found
-		go h.backgroundResolveByISRC(isrc)
-		c.String(http.StatusOK, `<div class="badge-loading">Resolving platforms...</div>`)
-		return
-	}
-
-	// Generate enhanced platform badges HTML with proper container structure
-	var badgesHTML strings.Builder
-
-	// Get all available platforms sorted alphabetically
-	var sortedPlatforms []models.PlatformLink
-	for _, link := range song.PlatformLinks {
-		if link.Available && link.URL != "" {
-			sortedPlatforms = append(sortedPlatforms, link)
-		}
-	}
-
-	// Sort by platform name
-	sort.Slice(sortedPlatforms, func(i, j int) bool {
-		return sortedPlatforms[i].Platform < sortedPlatforms[j].Platform
-	})
-
-	// Render badges
-	for _, platformLink := range sortedPlatforms {
-		badgeHTML := RenderPlatformBadge(platformLink.Platform, platformLink.URL)
-		badgesHTML.WriteString(badgeHTML)
-	}
-
-	// Return the complete platform container div with enhanced badges
-	html := fmt.Sprintf(`<div class="result-platforms" id="%s-platforms">%s</div>`, resultID, badgesHTML.String())
-
-	// If we have badges, add a small delay to show enhancement effect
-	if badgesHTML.Len() > 0 {
-		c.Header("HX-Trigger-After-Settle", "badgeEnhanced")
-	}
-
-	c.String(http.StatusOK, html)
-}
-
-// generateOOBBadgeUpdates creates out-of-band HTML updates for badge synchronization
-func (h *SongHandler) generateOOBBadgeUpdates(song *models.Song) string {
-	if song.ISRC == "" {
-		return ""
-	}
-
-	// Get all available platforms sorted alphabetically
-	var sortedPlatforms []models.PlatformLink
-	for _, link := range song.PlatformLinks {
-		if link.Available && link.URL != "" {
-			sortedPlatforms = append(sortedPlatforms, link)
-		}
-	}
-
-	// Sort by platform name
-	sort.Slice(sortedPlatforms, func(i, j int) bool {
-		return sortedPlatforms[i].Platform < sortedPlatforms[j].Platform
-	})
-
-	var html strings.Builder
-
-	// Generate the enhanced badges HTML
-	var badgesHTML strings.Builder
-	for _, platformLink := range sortedPlatforms {
-		badgeHTML := RenderPlatformBadge(platformLink.Platform, platformLink.URL)
-		badgesHTML.WriteString(badgeHTML)
-	}
-
-	// Create OOB update for the primary result (using ISRC-based ID)
-	resultID := "result-" + song.ISRC
-	html.WriteString(fmt.Sprintf(`
-		<div class="result-platforms" id="%s-platforms" hx-swap-oob="true">
-			%s
-		</div>
-	`, resultID, badgesHTML.String()))
-
-	return html.String()
-}
-
-// backgroundResolveByISRC attempts to resolve a song by ISRC in the background
-func (h *SongHandler) backgroundResolveByISRC(isrc string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Try to find the song on each platform using ISRC
-	platforms := []string{"spotify", "apple_music", "tidal"}
-	for _, platform := range platforms {
-		service := h.resolutionService.GetPlatformService(platform)
 		if service == nil {
 			continue
 		}
 
-		track, err := service.GetTrackByISRC(ctx, isrc)
-		if err != nil || track == nil {
-			continue
-		}
+		wg.Add(1)
+		go func(platform string, service services.PlatformService) {
+			defer wg.Done()
 
-		// Found a track! Try to resolve it fully
-		if track.URL != "" {
-			_, err := h.resolutionService.ResolveFromURL(ctx, track.URL)
+			cacheKey := fmt.Sprintf("%s:%s:%d", platform, searchTerm, req.Limit)
+			if cached, found := h.searchCache.get(cacheKey); found {
+				resultsChan <- platformResult{platform: platform, results: cached}
+				return
+			}
+
+			searchQuery := services.SearchQuery{
+				Title:  req.Title,
+				Artist: req.Artist,
+				Album:  req.Album,
+				Query:  searchTerm,
+				Limit:  req.Limit,
+			}
+
+			searchCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+
+			tracks, err := service.SearchTrack(searchCtx, searchQuery)
 			if err != nil {
-				slog.Debug("Background resolution failed", "platform", platform, "isrc", isrc, "error", err)
+				resultsChan <- platformResult{platform: platform, err: err}
+				return
+			}
+
+			results := make([]render.SearchResult, 0, len(tracks))
+			for _, track := range tracks {
+				results = append(results, render.SearchResult{
+					Title:       track.Title,
+					Artists:     track.Artists,
+					Album:       track.Album,
+					URL:         track.URL,
+					Platform:    platform,
+					ISRC:        track.ISRC,
+					DurationMs:  track.Duration,
+					ReleaseDate: track.ReleaseDate,
+					ImageURL:    track.ImageURL,
+					Explicit:    track.Explicit,
+					Available:   track.Available,
+				})
+			}
+
+			h.searchCache.set(cacheKey, results)
+			resultsChan <- platformResult{platform: platform, results: results}
+		}(platform, service)
+	}
+
+	go func() {
+		wg.Wait()
+		close(resultsChan)
+	}()
+
+	for result := range resultsChan {
+		if result.err != nil {
+			response.Results[result.platform] = []render.SearchResult{}
+		} else {
+			response.Results[result.platform] = result.results
+		}
+	}
+
+	return response
+}
+
+// GroupedSong represents a song with multiple platform links
+type GroupedSong struct {
+	Title       string
+	Artists     []string
+	Album       string
+	ISRC        string
+	DurationMs  int
+	ReleaseDate string
+	ImageURL    string
+	Explicit    bool
+	Platforms   []render.SearchResult // All platform results for this song
+}
+
+// renderSearchResultsHTML generates HTML for search results grouped by ISRC
+func (h *SongHandler) renderSearchResultsHTML(results map[string][]render.SearchResult) string {
+	var html strings.Builder
+	html.WriteString(`<div class="search-results">`)
+	
+	// Group results by ISRC
+	groupedSongs := h.groupSongsByISRC(results)
+	
+	if len(groupedSongs) == 0 {
+		html.WriteString(`<div class="no-results"><p>No results found.</p></div>`)
+		html.WriteString(`</div>`)
+		return html.String()
+	}
+	
+	// Render grouped songs
+	for i, song := range groupedSongs {
+		html.WriteString(fmt.Sprintf(`<div class="result-item" id="result-%d">`, i))
+		
+		// Album art (prefer image from first platform that has one)
+		imageURL := song.ImageURL
+		if imageURL != "" {
+			html.WriteString(fmt.Sprintf(`<img class="album-art" src="%s" alt="Album art" loading="lazy">`, imageURL))
+		} else {
+			html.WriteString(`<div class="result-image-placeholder">🎵</div>`)
+		}
+		
+		// Song info
+		html.WriteString(`<div class="song-info">`)
+		html.WriteString(fmt.Sprintf(`<h2 class="title">%s`, song.Title))
+		if song.Explicit {
+			html.WriteString(`<span class="explicit-indicator">E</span>`)
+		}
+		html.WriteString(`</h2>`)
+		
+		if len(song.Artists) > 0 {
+			html.WriteString(fmt.Sprintf(`<h3 class="artist">%s</h3>`, strings.Join(song.Artists, ", ")))
+		}
+		if song.Album != "" {
+			html.WriteString(fmt.Sprintf(`<h4 class="album">%s</h4>`, song.Album))
+		}
+		
+		// Platform badges
+		html.WriteString(`<div class="result-platforms">`)
+		for _, platform := range song.Platforms {
+			badgeClass := fmt.Sprintf("platform-badge platform-%s", strings.ReplaceAll(platform.Platform, "_", "-"))
+			html.WriteString(fmt.Sprintf(`<a href="%s" target="_blank" class="%s">`, platform.URL, badgeClass))
+			
+			// Platform icon if available
+			iconURL := h.getPlatformIconURL(platform.Platform)
+			if iconURL != "" {
+				html.WriteString(fmt.Sprintf(`<img src="%s" alt="%s" class="platform-badge-icon">`, iconURL, platform.Platform))
+			}
+			html.WriteString(h.getPlatformDisplayName(platform.Platform))
+			html.WriteString(`</a>`)
+		}
+		html.WriteString(`</div>`)
+		
+		html.WriteString(`</div>`) // Close song-info
+		
+		// Actions (moved outside song-info for proper alignment)
+		html.WriteString(`<div class="result-actions">`)
+		
+		// Share button for creating universal links
+		if len(song.Platforms) > 0 {
+			firstPlatformURL := song.Platforms[0].URL
+			html.WriteString(fmt.Sprintf(`<button class="action-btn action-secondary action-small" onclick="createShareLink('%s', this)">Share</button>`, firstPlatformURL))
+		}
+		
+		html.WriteString(`</div>`) // Close result-actions
+		html.WriteString(`</div>`) // Close result-item
+	}
+	
+	html.WriteString(`</div>`) // Close search-results
+	return html.String()
+}
+
+// groupSongsByISRC groups search results by ISRC, with fallback grouping by title+artist
+func (h *SongHandler) groupSongsByISRC(results map[string][]render.SearchResult) []GroupedSong {
+	// Map ISRC to grouped song
+	isrcToSong := make(map[string]*GroupedSong)
+	// Map title+artist combo to grouped song (for songs without ISRC)
+	titleArtistToSong := make(map[string]*GroupedSong)
+	
+	// Helper function to create a normalized title+artist key
+	normalizeKey := func(title string, artists []string) string {
+		titleLower := strings.ToLower(strings.TrimSpace(title))
+		artistLower := ""
+		if len(artists) > 0 {
+			artistLower = strings.ToLower(strings.TrimSpace(artists[0]))
+		}
+		return titleLower + "|" + artistLower
+	}
+	
+	// Process all results from all platforms
+	for _, platformResults := range results {
+		for _, result := range platformResults {
+			if result.ISRC != "" && result.ISRC != "unknown" {
+				// Group by ISRC
+				if existing, exists := isrcToSong[result.ISRC]; exists {
+					// Check if this platform already exists for this song
+					platformExists := false
+					for _, existingPlatform := range existing.Platforms {
+						if existingPlatform.Platform == result.Platform {
+							platformExists = true
+							break
+						}
+					}
+					
+					// Only add platform if it doesn't already exist
+					if !platformExists {
+						existing.Platforms = append(existing.Platforms, result)
+					}
+					
+					// Update song metadata if this result has better data
+					if existing.ImageURL == "" && result.ImageURL != "" {
+						existing.ImageURL = result.ImageURL
+					}
+				} else {
+					// Create new grouped song
+					isrcToSong[result.ISRC] = &GroupedSong{
+						Title:       result.Title,
+						Artists:     result.Artists,
+						Album:       result.Album,
+						ISRC:        result.ISRC,
+						DurationMs:  result.DurationMs,
+						ReleaseDate: result.ReleaseDate,
+						ImageURL:    result.ImageURL,
+						Explicit:    result.Explicit,
+						Platforms:   []render.SearchResult{result},
+					}
+				}
 			} else {
-				slog.Debug("Background resolution successful", "platform", platform, "isrc", isrc)
-				break // Successfully resolved, stop trying other platforms
+				// Group songs without ISRC by title+artist
+				titleArtistKey := normalizeKey(result.Title, result.Artists)
+				
+				if existing, exists := titleArtistToSong[titleArtistKey]; exists {
+					// Check if this platform already exists for this song
+					platformExists := false
+					for _, existingPlatform := range existing.Platforms {
+						if existingPlatform.Platform == result.Platform {
+							platformExists = true
+							break
+						}
+					}
+					
+					// Only add platform if it doesn't already exist
+					if !platformExists {
+						existing.Platforms = append(existing.Platforms, result)
+					}
+					
+					// Update song metadata if this result has better data
+					if existing.ImageURL == "" && result.ImageURL != "" {
+						existing.ImageURL = result.ImageURL
+					}
+				} else {
+					// Create new grouped song for title+artist combo
+					titleArtistToSong[titleArtistKey] = &GroupedSong{
+						Title:       result.Title,
+						Artists:     result.Artists,
+						Album:       result.Album,
+						ISRC:        result.ISRC,
+						DurationMs:  result.DurationMs,
+						ReleaseDate: result.ReleaseDate,
+						ImageURL:    result.ImageURL,
+						Explicit:    result.Explicit,
+						Platforms:   []render.SearchResult{result},
+					}
+				}
+			}
+		}
+	}
+	
+	// Convert maps to slice with deterministic ordering
+	var groupedSongs []GroupedSong
+	
+	// First handle ISRC-grouped songs
+	isrcs := make([]string, 0, len(isrcToSong))
+	for isrc := range isrcToSong {
+		isrcs = append(isrcs, isrc)
+	}
+	
+	// Sort ISRCs to ensure deterministic iteration
+	for i := 0; i < len(isrcs)-1; i++ {
+		for j := i + 1; j < len(isrcs); j++ {
+			if isrcs[i] > isrcs[j] {
+				isrcs[i], isrcs[j] = isrcs[j], isrcs[i]
+			}
+		}
+	}
+	
+	// Add ISRC-grouped songs
+	for _, isrc := range isrcs {
+		song := isrcToSong[isrc]
+		h.sortPlatformsByPreference(song.Platforms)
+		groupedSongs = append(groupedSongs, *song)
+	}
+	
+	// Then handle title+artist grouped songs (songs without ISRC)
+	titleArtistKeys := make([]string, 0, len(titleArtistToSong))
+	for key := range titleArtistToSong {
+		titleArtistKeys = append(titleArtistKeys, key)
+	}
+	
+	// Sort keys for deterministic iteration
+	for i := 0; i < len(titleArtistKeys)-1; i++ {
+		for j := i + 1; j < len(titleArtistKeys); j++ {
+			if titleArtistKeys[i] > titleArtistKeys[j] {
+				titleArtistKeys[i], titleArtistKeys[j] = titleArtistKeys[j], titleArtistKeys[i]
+			}
+		}
+	}
+	
+	// Add title+artist grouped songs
+	for _, key := range titleArtistKeys {
+		song := titleArtistToSong[key]
+		h.sortPlatformsByPreference(song.Platforms)
+		groupedSongs = append(groupedSongs, *song)
+	}
+	
+	// Sort grouped songs by relevance (number of platforms, then alphabetically)
+	h.sortGroupedSongs(groupedSongs)
+	
+	return groupedSongs
+}
+
+// sortPlatformsByPreference sorts platforms in display preference order
+func (h *SongHandler) sortPlatformsByPreference(platforms []render.SearchResult) {
+	preferenceOrder := map[string]int{
+		"local":       1,
+		"apple_music": 2,
+		"spotify":     3,
+		"tidal":       4,
+	}
+	
+	// Sort platforms by preference
+	for i := 0; i < len(platforms)-1; i++ {
+		for j := i + 1; j < len(platforms); j++ {
+			prefI := preferenceOrder[platforms[i].Platform]
+			prefJ := preferenceOrder[platforms[j].Platform]
+			if prefI > prefJ {
+				platforms[i], platforms[j] = platforms[j], platforms[i]
 			}
 		}
 	}
 }
 
-// generateSearchResultID creates a unique ID for a search result
-func (h *SongHandler) generateSearchResultID(result render.SearchResult) string {
-	// Use ISRC if available for deterministic IDs
-	if result.ISRC != "" {
-		return "result-" + result.ISRC
+// artistPopularityScore assigns popularity scores to artists (higher = more popular)
+func (h *SongHandler) artistPopularityScore(artists []string) int {
+	// Popular artists get higher scores
+	popularArtists := map[string]int{
+		"chappell roan":    1000,
+		"taylor swift":     950,
+		"billie eilish":    900,
+		"dua lipa":        850,
+		"ariana grande":   800,
+		"olivia rodrigo":  750,
+		"the weeknd":      700,
+		"bad bunny":       650,
+		"drake":           600,
+		"ed sheeran":      550,
+		// Add more as needed
 	}
-
-	// Fall back to random ID for results without ISRC
-	bytes := make([]byte, 8)
-	rand.Read(bytes)
-	return "result-" + hex.EncodeToString(bytes)
+	
+	maxScore := 0
+	for _, artist := range artists {
+		artistLower := strings.ToLower(strings.TrimSpace(artist))
+		if score, exists := popularArtists[artistLower]; exists && score > maxScore {
+			maxScore = score
+		}
+	}
+	return maxScore
 }
 
-// enhanceSearchResultsPlatforms performs background platform enhancement for search results
+// calculateRelevanceScore calculates a comprehensive relevance score for a song
+func (h *SongHandler) calculateRelevanceScore(song GroupedSong) int {
+	score := 0
+	
+	// Platform availability (more platforms = higher score)
+	score += len(song.Platforms) * 100
+	
+	// Artist popularity bonus
+	score += h.artistPopularityScore(song.Artists)
+	
+	// Release date bonus (newer songs get slight preference)
+	if song.ReleaseDate != "" {
+		// Simple heuristic: if release date contains recent years, boost score
+		if strings.Contains(song.ReleaseDate, "2024") {
+			score += 50
+		} else if strings.Contains(song.ReleaseDate, "2023") {
+			score += 30
+		} else if strings.Contains(song.ReleaseDate, "2022") {
+			score += 10
+		}
+	}
+	
+	// Album art bonus (songs with art are likely better curated)
+	if song.ImageURL != "" {
+		score += 25
+	}
+	
+	return score
+}
+
+// sortGroupedSongs sorts grouped songs by comprehensive relevance scoring
+func (h *SongHandler) sortGroupedSongs(songs []GroupedSong) {
+	// Calculate scores for all songs first
+	scores := make([]int, len(songs))
+	for i, song := range songs {
+		scores[i] = h.calculateRelevanceScore(song)
+	}
+	
+	// Sort by relevance score (descending), then by title (ascending) for tie-breaking
+	for i := 0; i < len(songs)-1; i++ {
+		for j := i + 1; j < len(songs); j++ {
+			shouldSwap := false
+			
+			// Primary sort: higher relevance score first
+			if scores[i] < scores[j] {
+				shouldSwap = true
+			} else if scores[i] == scores[j] {
+				// Tie-breaker: alphabetical by title
+				if songs[i].Title > songs[j].Title {
+					shouldSwap = true
+				}
+			}
+			
+			if shouldSwap {
+				songs[i], songs[j] = songs[j], songs[i]
+				scores[i], scores[j] = scores[j], scores[i]
+			}
+		}
+	}
+}
+
+// getPlatformIconURL returns the icon URL for a platform using WikiMedia URLs
+func (h *SongHandler) getPlatformIconURL(platform string) string {
+	config := GetPlatformUIConfig(platform)
+	return config.IconURL
+}
+
+// getPlatformDisplayName returns human-readable platform names
+func (h *SongHandler) getPlatformDisplayName(platform string) string {
+	switch platform {
+	case "apple_music":
+		return "Apple Music"
+	case "spotify":
+		return "Spotify"
+	case "tidal":
+		return "TIDAL"
+	case "local":
+		return "Local Library"
+	default:
+		return strings.Title(platform)
+	}
+}
+
+// findSongByISRC finds a song by ISRC or ID prefix
+func (h *SongHandler) findSongByISRC(ctx context.Context, identifier string) (*models.Song, error) {
+	// Try ISRC first
+	song, err := h.songRepository.FindByISRC(ctx, identifier)
+	if err != nil {
+		return nil, err
+	}
+	if song != nil {
+		return song, nil
+	}
+	
+	// Try ID prefix as fallback
+	return h.songRepository.FindByIDPrefix(ctx, identifier)
+}
+
+// EnhancedPlatformBadges - simple stub for backward compatibility
+func (h *SongHandler) EnhancedPlatformBadges(c *gin.Context) {
+	c.String(http.StatusOK, `<div>Enhanced badges not implemented</div>`)
+}
+
+// EnhanceBadges - simple stub for backward compatibility  
+func (h *SongHandler) EnhanceBadges(c *gin.Context) {
+	c.String(http.StatusOK, `<div>Badge enhancement not implemented</div>`)
+}
+
+// resolveSongFromPlatform resolves a song from a platform track ID
+func (h *SongHandler) resolveSongFromPlatform(ctx context.Context, platformService services.PlatformService, trackID string) (*models.Song, error) {
+	// Check if we already have this song by platform ID
+	existingSong, err := h.songRepository.FindByPlatformID(ctx, platformService.GetPlatformName(), trackID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check existing song: %w", err)
+	}
+
+	if existingSong != nil {
+		return existingSong, nil
+	}
+
+	// Fetch track info from the platform
+	trackInfo, err := platformService.GetTrackByID(ctx, trackID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get track info: %w", err)
+	}
+
+	// Try to find existing song by ISRC
+	if trackInfo.ISRC != "" {
+		existingSong, err := h.songRepository.FindByISRC(ctx, trackInfo.ISRC)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check existing song by ISRC: %w", err)
+		}
+
+		if existingSong != nil {
+			// Add this platform link if it doesn't exist
+			if !existingSong.HasPlatform(platformService.GetPlatformName()) {
+				existingSong.AddPlatformLink(platformService.GetPlatformName(), trackID, trackInfo.URL, 1.0)
+				if err := h.songRepository.Update(ctx, existingSong); err != nil {
+					slog.Error("Failed to update song with new platform link", "error", err)
+				}
+			}
+			return existingSong, nil
+		}
+	}
+
+	// Create new song from track info
+	song := trackInfo.ToSong()
+	if err := h.songRepository.Save(ctx, song); err != nil {
+		return nil, fmt.Errorf("failed to save new song: %w", err)
+	}
+
+	return song, nil
+}

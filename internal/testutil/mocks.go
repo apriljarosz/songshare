@@ -173,13 +173,13 @@ func (m *MockCache) Size() int {
 // Helper functions for setting up mock expectations
 
 // ExpectSongRepositoryFindByISRC sets up expectation for FindByISRC
-func ExpectSongRepositoryFindByISRC(mock *MockSongRepository, isrc string, song *models.Song, err error) {
-	mock.On("FindByISRC", mock.Anything, isrc).Return(song, err)
+func ExpectSongRepositoryFindByISRC(mockRepo *MockSongRepository, isrc string, song *models.Song, err error) {
+	mockRepo.On("FindByISRC", mock.Anything, isrc).Return(song, err)
 }
 
 // ExpectSongRepositorySave sets up expectation for Save
-func ExpectSongRepositorySave(mock *MockSongRepository, song *models.Song, err error) {
-	mock.On("Save", mock.Anything, song).Return(err)
+func ExpectSongRepositorySave(mockRepo *MockSongRepository, song *models.Song, err error) {
+	mockRepo.On("Save", mock.Anything, song).Return(err)
 }
 
 // ExpectPlatformServiceParseURL sets up expectation for ParseURL
@@ -188,6 +188,6 @@ func ExpectPlatformServiceParseURL(mock *MockPlatformService, url string, track 
 }
 
 // ExpectPlatformServiceGetTrackByID sets up expectation for GetTrackByID
-func ExpectPlatformServiceGetTrackByID(mock *MockPlatformService, trackID string, track *services.TrackInfo, err error) {
-	mock.On("GetTrackByID", mock.Anything, trackID).Return(track, err)
+func ExpectPlatformServiceGetTrackByID(mockService *MockPlatformService, trackID string, track *services.TrackInfo, err error) {
+	mockService.On("GetTrackByID", mock.Anything, trackID).Return(track, err)
 }

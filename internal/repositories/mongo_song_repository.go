@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -12,18 +13,38 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
+	"songshare/internal/cache"
 	"songshare/internal/models"
 )
 
-// mongoSongRepository implements SongRepository interface using MongoDB
+// mongoSongRepository implements SongRepository interface using MongoDB with optional caching
 type mongoSongRepository struct {
 	collection *mongo.Collection
+	cache      cache.Cache // Optional cache
 }
+
+// Cache constants
+const (
+	songCacheTTL = 1 * time.Hour
+)
+
+// Cache key generators
+func songIDKey(id string) string                 { return "song:id:" + id }
+func songISRCKey(isrc string) string             { return "song:isrc:" + isrc }
+func songPlatformKey(platform, id string) string { return "song:platform:" + platform + ":" + id }
 
 // NewMongoSongRepository creates a new MongoDB-backed song repository
 func NewMongoSongRepository(db *models.Database) SongRepository {
 	return &mongoSongRepository{
 		collection: db.DB.Collection("songs"),
+	}
+}
+
+// NewCachedMongoSongRepository creates a new MongoDB-backed song repository with caching
+func NewCachedMongoSongRepository(db *models.Database, cache cache.Cache) SongRepository {
+	return &mongoSongRepository{
+		collection: db.DB.Collection("songs"),
+		cache:      cache,
 	}
 }
 
@@ -48,6 +69,10 @@ func (r *mongoSongRepository) Save(ctx context.Context, song *models.Song) error
 	if err != nil {
 		return fmt.Errorf("failed to update song: %w", err)
 	}
+	
+	// Invalidate cache if enabled
+	r.invalidateCache(ctx, song)
+	
 	return nil
 }
 
@@ -69,6 +94,14 @@ func (r *mongoSongRepository) Update(ctx context.Context, song *models.Song) err
 
 // FindByID finds a song by its ObjectID
 func (r *mongoSongRepository) FindByID(ctx context.Context, id string) (*models.Song, error) {
+	// Try cache first if enabled
+	if r.cache != nil {
+		cacheKey := songIDKey(id)
+		if cached, err := r.getFromCache(ctx, cacheKey); err == nil && cached != nil {
+			return cached, nil
+		}
+	}
+	
 	objectID, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
 		return nil, fmt.Errorf("invalid object ID: %w", err)
@@ -84,6 +117,12 @@ func (r *mongoSongRepository) FindByID(ctx context.Context, id string) (*models.
 	}
 
 	r.handleSchemaEvolution(&song)
+	
+	// Cache the result if cache is enabled
+	if r.cache != nil {
+		r.cacheResult(ctx, songIDKey(id), &song)
+	}
+	
 	return &song, nil
 }
 
@@ -458,4 +497,78 @@ func (r *mongoSongRepository) handleSchemaEvolution(song *models.Song) {
 			slog.Error("Failed to update song schema version", "songID", song.ID, "error", err)
 		}
 	}()
+}
+
+// Cache helper methods
+
+// getFromCache retrieves a song from cache
+func (r *mongoSongRepository) getFromCache(ctx context.Context, key string) (*models.Song, error) {
+	if r.cache == nil {
+		return nil, fmt.Errorf("cache not enabled")
+	}
+	
+	data, err := r.cache.Get(ctx, key)
+	if err != nil || data == nil {
+		return nil, err
+	}
+
+	// Handle negative cache (null result marker)
+	if string(data) == "null" {
+		return nil, nil
+	}
+
+	var song models.Song
+	if err := json.Unmarshal(data, &song); err != nil {
+		slog.Error("Failed to unmarshal song from cache", "key", key, "error", err)
+		// Delete corrupted cache entry
+		r.cache.Delete(ctx, key)
+		return nil, err
+	}
+
+	return &song, nil
+}
+
+// cacheResult caches a single song result
+func (r *mongoSongRepository) cacheResult(ctx context.Context, key string, song *models.Song) {
+	if r.cache == nil {
+		return
+	}
+	
+	var data []byte
+	var err error
+
+	if song == nil {
+		data = []byte("null")
+	} else {
+		data, err = json.Marshal(song)
+		if err != nil {
+			slog.Error("Failed to marshal song for cache", "key", key, "error", err)
+			return
+		}
+	}
+
+	if err := r.cache.Set(ctx, key, data, songCacheTTL); err != nil {
+		slog.Error("Failed to cache song", "key", key, "error", err)
+	}
+}
+
+// invalidateCache removes cache entries for a song
+func (r *mongoSongRepository) invalidateCache(ctx context.Context, song *models.Song) {
+	if r.cache == nil {
+		return
+	}
+	
+	// Delete primary cache keys
+	if !song.ID.IsZero() {
+		r.cache.Delete(ctx, songIDKey(song.ID.Hex()))
+	}
+
+	if song.ISRC != "" {
+		r.cache.Delete(ctx, songISRCKey(song.ISRC))
+	}
+
+	// Delete platform-specific cache keys
+	for _, link := range song.PlatformLinks {
+		r.cache.Delete(ctx, songPlatformKey(link.Platform, link.ExternalID))
+	}
 }

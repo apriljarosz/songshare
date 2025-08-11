@@ -6,6 +6,8 @@ issues:
   max-issues-per-linter: 0
   max-same-issues: 0
   exclude-use-default: false
+  exclude-dirs:
+    - docs/templates
   exclude-rules:
     # Ignore security issues in test files
     - path: _test\.go
@@ -33,7 +35,7 @@ linters:
     - durationcheck
     - errorlint
     - exhaustive
-    - exportloopref
+    - copyloopvar
     - forbidigo
     - goconst
     - gocritic
@@ -43,7 +45,7 @@ linters:
     - gofumpt
     - goheader
     - goimports
-    - gomnd
+    - mnd
     - gomodguard
     - goprintffuncname
     - gosec

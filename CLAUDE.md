@@ -291,3 +291,4 @@ The `/s/:id` endpoint provides dual JSON/HTML responses based on Accept headers.
 
 ## Development Memories
 - The go server is running in Air, which auto hot-reloads, so you don't need to restart anything
+- Make sure to clean up the old logic as you go. Replace and enhance existing code instead of adding new functions alongside the old.
