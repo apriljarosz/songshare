@@ -1,0 +1,22 @@
+meta {
+  name: Search for songs across platforms
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/songs/search
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "title": "",
+    "artist": "",
+    "album": "",
+    "query": "",
+    "platform": "",
+    "limit": 0
+  }
+}

@@ -1,0 +1,19 @@
+# Ranking configuration (TOML)
+# Defaults match in-code fallbacks; edit and restart to apply.
+
+ranker_popularity_scale = 1.0            # Engine ranker: popularity 0-100 * scale → points (default up to 80)
+tie_epsilon = 2.5                         # Treat relevance scores within this delta as a tie; break with popularity
+popularity_boost_multiplier = 2.0        # Multiplier on scorer's popularity boost (thresholded buckets)
+
+[platform_weights]
+local = 0.0
+spotify = 1.1
+apple_music = 0.0
+tidal = 0.9
+
+[popularity_platform_weights]
+spotify = 1.0
+tidal = 0.8
+apple_music = 0.0
+
+

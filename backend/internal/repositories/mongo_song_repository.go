@@ -1,0 +1,574 @@
+package repositories
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"regexp"
+	"time"
+
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
+
+	"songshare/internal/cache"
+	"songshare/internal/models"
+)
+
+// mongoSongRepository implements SongRepository interface using MongoDB with optional caching
+type mongoSongRepository struct {
+	collection *mongo.Collection
+	cache      cache.Cache // Optional cache
+}
+
+// Cache constants
+const (
+	songCacheTTL = 1 * time.Hour
+)
+
+// Cache key generators
+func songIDKey(id string) string                 { return "song:id:" + id }
+func songISRCKey(isrc string) string             { return "song:isrc:" + isrc }
+func songPlatformKey(platform, id string) string { return "song:platform:" + platform + ":" + id }
+
+// NewMongoSongRepository creates a new MongoDB-backed song repository
+func NewMongoSongRepository(db *models.Database) SongRepository {
+	return &mongoSongRepository{
+		collection: db.DB.Collection("songs"),
+	}
+}
+
+// NewCachedMongoSongRepository creates a new MongoDB-backed song repository with caching
+func NewCachedMongoSongRepository(db *models.Database, cache cache.Cache) SongRepository {
+	return &mongoSongRepository{
+		collection: db.DB.Collection("songs"),
+		cache:      cache,
+	}
+}
+
+// Save creates a new song or updates existing one
+func (r *mongoSongRepository) Save(ctx context.Context, song *models.Song) error {
+	song.SchemaVersion = models.CurrentSchemaVersion
+	song.UpdatedAt = time.Now()
+
+	if song.ID.IsZero() {
+		// New song
+		song.CreatedAt = time.Now()
+		result, err := r.collection.InsertOne(ctx, song)
+		if err != nil {
+			return fmt.Errorf("failed to insert song: %w", err)
+		}
+		song.ID = result.InsertedID.(primitive.ObjectID)
+		return nil
+	}
+
+	// Update existing song
+	_, err := r.collection.ReplaceOne(ctx, bson.M{"_id": song.ID}, song)
+	if err != nil {
+		return fmt.Errorf("failed to update song: %w", err)
+	}
+	
+	// Invalidate cache if enabled
+	r.invalidateCache(ctx, song)
+	
+	return nil
+}
+
+// Update updates an existing song
+func (r *mongoSongRepository) Update(ctx context.Context, song *models.Song) error {
+	if song.ID.IsZero() {
+		return fmt.Errorf("song ID is required for update")
+	}
+
+	song.UpdatedAt = time.Now()
+	song.SchemaVersion = models.CurrentSchemaVersion
+
+	_, err := r.collection.ReplaceOne(ctx, bson.M{"_id": song.ID}, song)
+	if err != nil {
+		return fmt.Errorf("failed to update song: %w", err)
+	}
+	return nil
+}
+
+// FindByID finds a song by its ObjectID
+func (r *mongoSongRepository) FindByID(ctx context.Context, id string) (*models.Song, error) {
+	// Try cache first if enabled
+	if r.cache != nil {
+		cacheKey := songIDKey(id)
+		if cached, err := r.getFromCache(ctx, cacheKey); err == nil && cached != nil {
+			return cached, nil
+		}
+	}
+	
+	objectID, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		return nil, fmt.Errorf("invalid object ID: %w", err)
+	}
+
+	var song models.Song
+	err = r.collection.FindOne(ctx, bson.M{"_id": objectID}).Decode(&song)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to find song by ID: %w", err)
+	}
+
+	r.handleSchemaEvolution(&song)
+	
+	// Cache the result if cache is enabled
+	if r.cache != nil {
+		r.cacheResult(ctx, songIDKey(id), &song)
+	}
+	
+	return &song, nil
+}
+
+// FindByISRC finds a song by its ISRC code
+func (r *mongoSongRepository) FindByISRC(ctx context.Context, isrc string) (*models.Song, error) {
+	var song models.Song
+	err := r.collection.FindOne(ctx, bson.M{"isrc": isrc}).Decode(&song)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to find song by ISRC: %w", err)
+	}
+
+	r.handleSchemaEvolution(&song)
+	return &song, nil
+}
+
+// FindByISRCBatch finds multiple songs by their ISRC codes in a single query
+func (r *mongoSongRepository) FindByISRCBatch(ctx context.Context, isrcs []string) (map[string]*models.Song, error) {
+	if len(isrcs) == 0 {
+		return make(map[string]*models.Song), nil
+	}
+
+	// Remove duplicates and empty strings
+	uniqueISRCs := make(map[string]bool)
+	for _, isrc := range isrcs {
+		if isrc != "" {
+			uniqueISRCs[isrc] = true
+		}
+	}
+
+	// Convert to slice
+	isrcList := make([]string, 0, len(uniqueISRCs))
+	for isrc := range uniqueISRCs {
+		isrcList = append(isrcList, isrc)
+	}
+
+	// Query all songs with matching ISRCs
+	filter := bson.M{"isrc": bson.M{"$in": isrcList}}
+	cursor, err := r.collection.Find(ctx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find songs by ISRC batch: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	// Build result map
+	result := make(map[string]*models.Song)
+	for cursor.Next(ctx) {
+		var song models.Song
+		if err := cursor.Decode(&song); err != nil {
+			slog.Error("Failed to decode song in batch", "error", err)
+			continue
+		}
+		r.handleSchemaEvolution(&song)
+		result[song.ISRC] = &song
+	}
+
+	if err := cursor.Err(); err != nil {
+		return nil, fmt.Errorf("cursor error in ISRC batch query: %w", err)
+	}
+
+	return result, nil
+}
+
+// FindByTitleArtist finds songs by title and artist (fuzzy matching)
+func (r *mongoSongRepository) FindByTitleArtist(ctx context.Context, title, artist string) ([]*models.Song, error) {
+	// Create case-insensitive regex patterns
+	titlePattern := primitive.Regex{Pattern: regexp.QuoteMeta(title), Options: "i"}
+	artistPattern := primitive.Regex{Pattern: regexp.QuoteMeta(artist), Options: "i"}
+
+	filter := bson.M{
+		"title":  titlePattern,
+		"artist": artistPattern,
+	}
+
+	cursor, err := r.collection.Find(ctx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find songs by title/artist: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	var songs []*models.Song
+	for cursor.Next(ctx) {
+		var song models.Song
+		if err := cursor.Decode(&song); err != nil {
+			slog.Error("Failed to decode song", "error", err)
+			continue
+		}
+		r.handleSchemaEvolution(&song)
+		songs = append(songs, &song)
+	}
+
+	return songs, cursor.Err()
+}
+
+// FindByPlatformID finds a song by platform-specific ID
+func (r *mongoSongRepository) FindByPlatformID(ctx context.Context, platform, externalID string) (*models.Song, error) {
+	filter := bson.M{
+		"platform_links": bson.M{
+			"$elemMatch": bson.M{
+				"platform":    platform,
+				"external_id": externalID,
+			},
+		},
+	}
+
+	var song models.Song
+	err := r.collection.FindOne(ctx, filter).Decode(&song)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to find song by platform ID: %w", err)
+	}
+
+	r.handleSchemaEvolution(&song)
+	return &song, nil
+}
+
+// Search performs full-text search on songs
+func (r *mongoSongRepository) Search(ctx context.Context, query string, limit int) ([]*models.Song, error) {
+	filter := bson.M{
+		"$text": bson.M{
+			"$search": query,
+		},
+	}
+
+	opts := options.Find().
+		SetLimit(int64(limit)).
+		SetSort(bson.M{"score": bson.M{"$meta": "textScore"}})
+
+	cursor, err := r.collection.Find(ctx, filter, opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search songs: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	var songs []*models.Song
+	for cursor.Next(ctx) {
+		var song models.Song
+		if err := cursor.Decode(&song); err != nil {
+			slog.Error("Failed to decode song", "error", err)
+			continue
+		}
+		r.handleSchemaEvolution(&song)
+		songs = append(songs, &song)
+	}
+
+	return songs, cursor.Err()
+}
+
+// FindSimilar finds similar songs using aggregation pipeline
+func (r *mongoSongRepository) FindSimilar(ctx context.Context, song *models.Song, limit int) ([]*models.Song, error) {
+	pipeline := []bson.M{
+		{
+			"$match": bson.M{
+				"_id": bson.M{"$ne": song.ID}, // Exclude the input song
+				"$or": []bson.M{
+					{"isrc": song.ISRC},
+					{
+						"$and": []bson.M{
+							{"title": primitive.Regex{Pattern: regexp.QuoteMeta(song.Title), Options: "i"}},
+							{"artist": primitive.Regex{Pattern: regexp.QuoteMeta(song.Artist), Options: "i"}},
+						},
+					},
+				},
+			},
+		},
+		{
+			"$addFields": bson.M{
+				"similarity_score": bson.M{
+					"$add": []interface{}{
+						// ISRC match = 100 points
+						bson.M{"$cond": []interface{}{
+							bson.M{"$eq": []interface{}{"$isrc", song.ISRC}}, 100, 0}},
+						// Exact title match = 50 points
+						bson.M{"$cond": []interface{}{
+							bson.M{"$eq": []interface{}{"$title", song.Title}}, 50, 0}},
+						// Exact artist match = 30 points
+						bson.M{"$cond": []interface{}{
+							bson.M{"$eq": []interface{}{"$artist", song.Artist}}, 30, 0}},
+					},
+				},
+			},
+		},
+		{
+			"$sort": bson.M{"similarity_score": -1},
+		},
+		{
+			"$limit": int64(limit),
+		},
+	}
+
+	cursor, err := r.collection.Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find similar songs: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	var songs []*models.Song
+	for cursor.Next(ctx) {
+		var song models.Song
+		if err := cursor.Decode(&song); err != nil {
+			slog.Error("Failed to decode song", "error", err)
+			continue
+		}
+		r.handleSchemaEvolution(&song)
+		songs = append(songs, &song)
+	}
+
+	return songs, cursor.Err()
+}
+
+// FindMany finds multiple songs by their IDs
+func (r *mongoSongRepository) FindMany(ctx context.Context, ids []string) ([]*models.Song, error) {
+	objectIDs := make([]primitive.ObjectID, 0, len(ids))
+	for _, id := range ids {
+		objectID, err := primitive.ObjectIDFromHex(id)
+		if err != nil {
+			continue // Skip invalid IDs
+		}
+		objectIDs = append(objectIDs, objectID)
+	}
+
+	if len(objectIDs) == 0 {
+		return []*models.Song{}, nil
+	}
+
+	filter := bson.M{"_id": bson.M{"$in": objectIDs}}
+	cursor, err := r.collection.Find(ctx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find songs: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	var songs []*models.Song
+	for cursor.Next(ctx) {
+		var song models.Song
+		if err := cursor.Decode(&song); err != nil {
+			slog.Error("Failed to decode song", "error", err)
+			continue
+		}
+		r.handleSchemaEvolution(&song)
+		songs = append(songs, &song)
+	}
+
+	return songs, cursor.Err()
+}
+
+// SaveMany saves multiple songs in bulk
+func (r *mongoSongRepository) SaveMany(ctx context.Context, songs []*models.Song) error {
+	if len(songs) == 0 {
+		return nil
+	}
+
+	now := time.Now()
+	docs := make([]interface{}, len(songs))
+
+	for i, song := range songs {
+		song.SchemaVersion = models.CurrentSchemaVersion
+		song.UpdatedAt = now
+		if song.CreatedAt.IsZero() {
+			song.CreatedAt = now
+		}
+		docs[i] = song
+	}
+
+	_, err := r.collection.InsertMany(ctx, docs)
+	if err != nil {
+		return fmt.Errorf("failed to save songs in bulk: %w", err)
+	}
+
+	return nil
+}
+
+// DeleteByID deletes a song by its ID
+func (r *mongoSongRepository) DeleteByID(ctx context.Context, id string) error {
+	objectID, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		return fmt.Errorf("invalid object ID: %w", err)
+	}
+
+	result, err := r.collection.DeleteOne(ctx, bson.M{"_id": objectID})
+	if err != nil {
+		return fmt.Errorf("failed to delete song: %w", err)
+	}
+
+	if result.DeletedCount == 0 {
+		return fmt.Errorf("song not found")
+	}
+
+	return nil
+}
+
+// Count returns the total number of songs in the collection
+func (r *mongoSongRepository) Count(ctx context.Context) (int64, error) {
+	count, err := r.collection.CountDocuments(ctx, bson.M{})
+	if err != nil {
+		return 0, fmt.Errorf("failed to count songs: %w", err)
+	}
+	return count, nil
+}
+
+// FindByIDPrefix finds a song by ObjectID prefix (for short ID lookup)
+func (r *mongoSongRepository) FindByIDPrefix(ctx context.Context, prefix string) (*models.Song, error) {
+	// Pad the prefix to create a range query
+	if len(prefix) < 8 {
+		return nil, fmt.Errorf("prefix must be at least 8 characters")
+	}
+
+	// Take only the first 8 characters for consistency
+	prefix = prefix[:8]
+
+	// Create ObjectID range for prefix matching
+	startHex := prefix + "0000000000000000" // Pad with zeros to get minimum
+	endHex := prefix + "ffffffffffffffff"   // Pad with 'f' to get maximum
+
+	startID, err := primitive.ObjectIDFromHex(startHex)
+	if err != nil {
+		return nil, fmt.Errorf("invalid prefix: %w", err)
+	}
+
+	endID, err := primitive.ObjectIDFromHex(endHex)
+	if err != nil {
+		return nil, fmt.Errorf("invalid prefix: %w", err)
+	}
+
+	filter := bson.M{
+		"_id": bson.M{
+			"$gte": startID,
+			"$lte": endID,
+		},
+	}
+
+	var song models.Song
+	err = r.collection.FindOne(ctx, filter).Decode(&song)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to find song by ID prefix: %w", err)
+	}
+
+	r.handleSchemaEvolution(&song)
+	return &song, nil
+}
+
+// handleSchemaEvolution handles schema migration for older documents
+func (r *mongoSongRepository) handleSchemaEvolution(song *models.Song) {
+	if song.SchemaVersion >= models.CurrentSchemaVersion {
+		return
+	}
+
+	// Handle migration from older schema versions
+	switch song.SchemaVersion {
+	case 0:
+		// Migration from version 0 to 1
+		// Add any necessary field transformations here
+		song.SchemaVersion = 1
+		fallthrough
+	default:
+		song.SchemaVersion = models.CurrentSchemaVersion
+	}
+
+	// Lazy update the document in the database
+	// This could be done in a background process if preferred
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := r.Update(ctx, song); err != nil {
+			slog.Error("Failed to update song schema version", "songID", song.ID, "error", err)
+		}
+	}()
+}
+
+// Cache helper methods
+
+// getFromCache retrieves a song from cache
+func (r *mongoSongRepository) getFromCache(ctx context.Context, key string) (*models.Song, error) {
+	if r.cache == nil {
+		return nil, fmt.Errorf("cache not enabled")
+	}
+	
+	data, err := r.cache.Get(ctx, key)
+	if err != nil || data == nil {
+		return nil, err
+	}
+
+	// Handle negative cache (null result marker)
+	if string(data) == "null" {
+		return nil, nil
+	}
+
+	var song models.Song
+	if err := json.Unmarshal(data, &song); err != nil {
+		slog.Error("Failed to unmarshal song from cache", "key", key, "error", err)
+		// Delete corrupted cache entry
+		r.cache.Delete(ctx, key)
+		return nil, err
+	}
+
+	return &song, nil
+}
+
+// cacheResult caches a single song result
+func (r *mongoSongRepository) cacheResult(ctx context.Context, key string, song *models.Song) {
+	if r.cache == nil {
+		return
+	}
+	
+	var data []byte
+	var err error
+
+	if song == nil {
+		data = []byte("null")
+	} else {
+		data, err = json.Marshal(song)
+		if err != nil {
+			slog.Error("Failed to marshal song for cache", "key", key, "error", err)
+			return
+		}
+	}
+
+	if err := r.cache.Set(ctx, key, data, songCacheTTL); err != nil {
+		slog.Error("Failed to cache song", "key", key, "error", err)
+	}
+}
+
+// invalidateCache removes cache entries for a song
+func (r *mongoSongRepository) invalidateCache(ctx context.Context, song *models.Song) {
+	if r.cache == nil {
+		return
+	}
+	
+	// Delete primary cache keys
+	if !song.ID.IsZero() {
+		r.cache.Delete(ctx, songIDKey(song.ID.Hex()))
+	}
+
+	if song.ISRC != "" {
+		r.cache.Delete(ctx, songISRCKey(song.ISRC))
+	}
+
+	// Delete platform-specific cache keys
+	for _, link := range song.PlatformLinks {
+		r.cache.Delete(ctx, songPlatformKey(link.Platform, link.ExternalID))
+	}
+}
