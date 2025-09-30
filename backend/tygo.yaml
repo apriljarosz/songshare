@@ -1,9 +1,0 @@
-packages:
-  - path: "songshare/internal/models"
-    type_mappings:
-      time.Time: "string"
-      primitive.ObjectID: "string"
-    output_path: "./frontend/src/lib/types/generated.ts"
-    style: "typescript"
-    include_files:
-      - "song.go"

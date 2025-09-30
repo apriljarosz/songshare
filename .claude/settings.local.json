@@ -43,8 +43,11 @@
       "Bash(make:*)",
       "mcp__gopls__go_workspace",
       "Bash(rm:*)",
-      "Bash(go mod:*)"
+      "Bash(go mod:*)",
+      "WebFetch(domain:developer.spotify.com)",
+      "Bash(./run.sh)"
     ],
     "deny": []
-  }
+  },
+  "outputStyle": "default"
 }

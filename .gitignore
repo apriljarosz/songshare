@@ -1,3 +1,7 @@
+# ==========================
+# Go Backend
+# ==========================
+
 # Binaries for programs and plugins
 *.exe
 *.exe~
@@ -5,62 +9,259 @@
 *.so
 *.dylib
 server
+main
+songshare
+backend/server
+backend/main
+backend/songshare
 
 # Test binary, built with `go test -c`
 *.test
 
-# Output of the go coverage tool, specifically when used with LiteIDE
+# Output of the go coverage tool
 *.out
-
-# Dependency directories (remove the comment below to include it)
-# vendor/
+coverage.html
+coverage.out
 
 # Go workspace file
 go.work
+go.work.sum
+
+# Vendor directory (uncomment if using vendor)
+# vendor/
+
+# Air hot reload
+tmp/
+.air.toml
+
+# ==========================
+# Node.js / SvelteKit Frontend
+# ==========================
+
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+.yarn/
+
+# SvelteKit
+.svelte-kit/
+build/
+.output/
+
+# Vite
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+# Production builds
+dist/
+out/
+
+# Package managers
+.npm
+.yarn-integrity
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ==========================
+# Environment & Config
+# ==========================
 
 # Environment variables
 .env
+.env.*
+!.env.example
+!.env.test
 .env.local
 .env.*.local
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS generated files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-
-# Logs
-*.log
-build-errors.log
-
-# Docker
-.dockerignore
-
-# Temporary files
-tmp/
-temp/
-
+# API Keys and secrets
 keys/
- 
+*.p8
+*.pem
+*.key
+*.crt
+*.cer
+
+# ==========================
+# IDE & Editors
+# ==========================
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# JetBrains IDEs
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
 # Cursor IDE
-# Ignore all Cursor metadata by default, but keep shared project rules tracked
 .cursor/*
 !.cursor/rules/
 !.cursor/rules/**
-
-# (Redundant with the wildcard above, kept for clarity if rules expand later)
 .cursor/*.local.json
 .cursor/settings.local.json
 .cursor/history/
 .cursor/sessions/
 .cursor/cache/
+
+# Vim
+*.swp
+*.swo
+*~
+*.swn
+*.swm
+.*.swp
+.*.swo
+.netrwhist
+Session.vim
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# Sublime Text
+*.sublime-workspace
+*.sublime-project
+
+# ==========================
+# OS Files
+# ==========================
+
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+.AppleDouble
+.LSOverride
+Icon?
+.DocumentRevisions-V100
+.fseventsd
+.TemporaryItems
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Linux
+.directory
+.Trash-*
+
+# ==========================
+# Logs & Debug
+# ==========================
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+build-errors.log
+server.log
+air-*.log
+
+# Debugging
+.vscode-test
+*.heap
+*.cpuprofile
+*.heapsnapshot
+
+# ==========================
+# Testing & Coverage
+# ==========================
+
+# Test coverage
+coverage/
+*.lcov
+.nyc_output/
+benchmarks/
+profiles/
+
+# ==========================
+# Build & Deploy
+# ==========================
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Deployment platforms
+.vercel
+.netlify
+.wrangler
+
+# Build artifacts
+*.tsbuildinfo
+.cache/
+.parcel-cache/
+.next/
+.nuxt/
+.docusaurus/
+.turbo/
+
+# ==========================
+# Database & Cache
+# ==========================
+
+# Database dumps
+*.dump
+*.sql
+*.sqlite
+*.db
+
+# Cache files
+.cache/
+cache.test
+
+# ==========================
+# Temporary Files
+# ==========================
+
+# Temporary directories
+temp/
+tmp/
+.tmp/
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# ==========================
+# Project Specific
+# ==========================
+
+# Generated TypeScript types (if auto-generated)
+# Uncomment if these are generated files
+# frontend/src/types/generated.ts
+
+# Bruno API client local configs
+backend/SongShare API/environments/*.local.bru
+
+# Build outputs in wrong locations
+/internal/handlers/*.exe
+/internal/handlers/*.test
+
+# Miscellaneous
+*.pid
+*.seed
+*.pid.lock
+.grunt
+bower_components/
