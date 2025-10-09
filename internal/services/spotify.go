@@ -31,6 +31,7 @@ type spotifyAuthResponse struct {
 type spotifyTrack struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
+	Explicit    bool   `json:"explicit"`
 	DurationMS  int    `json:"duration_ms"`
 	ExternalIDs struct {
 		ISRC string `json:"isrc"`
@@ -110,8 +111,21 @@ func (s *SpotifyService) authenticate() error {
 }
 
 func (s *SpotifyService) Search(query string) ([]models.Song, error) {
+	return s.SearchWithPagination(query, 0, 10)
+}
+
+func (s *SpotifyService) SearchWithPagination(query string, offset, limit int) ([]models.Song, error) {
+	// Set default limit if not provided
+	if limit <= 0 {
+		limit = 10
+	}
+	// Spotify max limit is 50
+	if limit > 50 {
+		limit = 50
+	}
+
 	// Check cache first
-	cacheKey := "spotify:search:" + query
+	cacheKey := fmt.Sprintf("spotify:search:%s:%d:%d", query, offset, limit)
 	if cached, found := s.cache.Get(cacheKey); found {
 		return cached.([]models.Song), nil
 	}
@@ -121,9 +135,9 @@ func (s *SpotifyService) Search(query string) ([]models.Song, error) {
 		return nil, err
 	}
 
-	// Build search URL
-	searchURL := fmt.Sprintf("https://api.spotify.com/v1/search?q=%s&type=track&limit=10",
-		url.QueryEscape(query))
+	// Build search URL with pagination
+	searchURL := fmt.Sprintf("https://api.spotify.com/v1/search?q=%s&type=track&limit=%d&offset=%d",
+		url.QueryEscape(query), limit, offset)
 
 	req, err := http.NewRequest("GET", searchURL, nil)
 	if err != nil {
@@ -210,6 +224,60 @@ func (s *SpotifyService) GetTrackByID(trackID string) (*models.Song, error) {
 	return &song, nil
 }
 
+func (s *SpotifyService) GetSongByISRC(isrc string) (*models.Song, error) {
+	// Check cache first
+	cacheKey := "spotify:isrc:" + isrc
+	if cached, found := s.cache.Get(cacheKey); found {
+		song := cached.(models.Song)
+		return &song, nil
+	}
+
+	// Authenticate
+	if err := s.authenticate(); err != nil {
+		return nil, err
+	}
+
+	// Search by ISRC
+	searchURL := fmt.Sprintf("https://api.spotify.com/v1/search?q=isrc:%s&type=track&limit=1",
+		url.QueryEscape(isrc))
+
+	req, err := http.NewRequest("GET", searchURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ISRC search request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+s.accessToken)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("ISRC search request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("ISRC search failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var searchResp spotifySearchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
+		return nil, fmt.Errorf("failed to decode ISRC search response: %w", err)
+	}
+
+	// Check if we found a track
+	if len(searchResp.Tracks.Items) == 0 {
+		return nil, nil // Not found, return nil without error
+	}
+
+	song := s.trackToSong(searchResp.Tracks.Items[0])
+
+	// Cache for 24 hours
+	s.cache.Set(cacheKey, song, 24*time.Hour)
+
+	return &song, nil
+}
+
 func (s *SpotifyService) trackToSong(track spotifyTrack) models.Song {
 	// Extract artists
 	artists := make([]string, len(track.Artists))
@@ -231,6 +299,7 @@ func (s *SpotifyService) trackToSong(track spotifyTrack) models.Song {
 		AlbumArt:    albumArt,
 		Duration:    track.DurationMS,
 		ReleaseDate: track.Album.ReleaseDate,
+		Explicit:    track.Explicit,
 		Platforms: []models.PlatformLink{
 			{
 				Platform: "spotify",

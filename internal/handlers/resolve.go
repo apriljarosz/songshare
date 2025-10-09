@@ -88,9 +88,15 @@ func (h *ResolveHandler) mergePlatforms(existing, new []models.PlatformLink) []m
 		platformMap[p.Platform] = p
 	}
 
+	// Define consistent platform order
+	platformOrder := []string{"spotify", "apple_music", "youtube_music", "tidal", "deezer"}
+
+	// Convert back to slice in consistent order
 	result := make([]models.PlatformLink, 0, len(platformMap))
-	for _, p := range platformMap {
-		result = append(result, p)
+	for _, platformName := range platformOrder {
+		if p, exists := platformMap[platformName]; exists {
+			result = append(result, p)
+		}
 	}
 	return result
 }

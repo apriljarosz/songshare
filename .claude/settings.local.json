@@ -45,7 +45,11 @@
       "Bash(rm:*)",
       "Bash(go mod:*)",
       "WebFetch(domain:developer.spotify.com)",
-      "Bash(./run.sh)"
+      "Bash(./run.sh)",
+      "WebFetch(domain:github.com)",
+      "Bash(docker-compose logs:*)",
+      "Bash(lsof:*)",
+      "Bash(xargs kill:*)"
     ],
     "deny": []
   },

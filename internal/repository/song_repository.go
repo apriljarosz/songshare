@@ -29,6 +29,7 @@ func (r *SongRepository) FindByISRC(ctx context.Context, isrc string) (*models.S
 	if err != nil {
 		return nil, err
 	}
+	sortPlatforms(&song)
 	return &song, nil
 }
 
@@ -41,6 +42,7 @@ func (r *SongRepository) FindByID(ctx context.Context, id string) (*models.Song,
 	if err != nil {
 		return nil, err
 	}
+	sortPlatforms(&song)
 	return &song, nil
 }
 
@@ -79,4 +81,23 @@ func (r *SongRepository) AddPlatformLink(ctx context.Context, isrc string, platf
 		},
 	)
 	return err
+}
+
+// sortPlatforms ensures consistent platform ordering
+func sortPlatforms(song *models.Song) {
+	platformOrder := []string{"spotify", "apple_music", "youtube_music", "tidal", "deezer"}
+	platformMap := make(map[string]models.PlatformLink)
+
+	for _, p := range song.Platforms {
+		platformMap[p.Platform] = p
+	}
+
+	sorted := make([]models.PlatformLink, 0, len(platformMap))
+	for _, platformName := range platformOrder {
+		if p, exists := platformMap[platformName]; exists {
+			sorted = append(sorted, p)
+		}
+	}
+
+	song.Platforms = sorted
 }

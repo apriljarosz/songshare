@@ -11,6 +11,7 @@ type Song struct {
 	AlbumArt    string         `bson:"album_art" json:"albumArt"`
 	Duration    int            `bson:"duration" json:"duration"` // milliseconds
 	ReleaseDate string         `bson:"release_date" json:"releaseDate"`
+	Explicit    bool           `bson:"explicit" json:"explicit"`
 	Platforms   []PlatformLink `bson:"platforms" json:"platforms"`
 	CreatedAt   time.Time      `bson:"created_at" json:"createdAt"`
 	UpdatedAt   time.Time      `bson:"updated_at" json:"updatedAt"`
@@ -24,7 +25,9 @@ type PlatformLink struct {
 
 // SearchRequest represents a text search query
 type SearchRequest struct {
-	Query string `json:"query" binding:"required"`
+	Query  string `json:"query" binding:"required"`
+	Offset int    `json:"offset"` // Number of results to skip (for pagination)
+	Limit  int    `json:"limit"`  // Number of results to return (default 10)
 }
 
 // ResolveRequest represents a platform URL to resolve

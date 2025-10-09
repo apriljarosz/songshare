@@ -43,6 +43,7 @@ type appleMusicSong struct {
 		DurationInMillis int      `json:"durationInMillis"`
 		GenreNames       []string `json:"genreNames"`
 		ReleaseDate      string   `json:"releaseDate"`
+		ContentRating    string   `json:"contentRating"` // "explicit" if explicit
 		URL              string   `json:"url"`
 	} `json:"attributes"`
 }
@@ -123,8 +124,21 @@ func (s *AppleMusicService) generateToken() error {
 }
 
 func (s *AppleMusicService) Search(query string) ([]models.Song, error) {
+	return s.SearchWithPagination(query, 0, 10)
+}
+
+func (s *AppleMusicService) SearchWithPagination(query string, offset, limit int) ([]models.Song, error) {
+	// Set default limit if not provided
+	if limit <= 0 {
+		limit = 10
+	}
+	// Apple Music max limit is 25
+	if limit > 25 {
+		limit = 25
+	}
+
 	// Check cache first
-	cacheKey := "apple_music:search:" + query
+	cacheKey := fmt.Sprintf("apple_music:search:%s:%d:%d", query, offset, limit)
 	if cached, found := s.cache.Get(cacheKey); found {
 		return cached.([]models.Song), nil
 	}
@@ -134,9 +148,9 @@ func (s *AppleMusicService) Search(query string) ([]models.Song, error) {
 		return nil, err
 	}
 
-	// Build search URL
-	searchURL := fmt.Sprintf("https://api.music.apple.com/v1/catalog/us/search?term=%s&types=songs&limit=10",
-		url.QueryEscape(query))
+	// Build search URL with pagination
+	searchURL := fmt.Sprintf("https://api.music.apple.com/v1/catalog/us/search?term=%s&types=songs&limit=%d&offset=%d",
+		url.QueryEscape(query), limit, offset)
 
 	req, err := http.NewRequest("GET", searchURL, nil)
 	if err != nil {
@@ -292,6 +306,7 @@ func (s *AppleMusicService) trackToSong(track appleMusicSong) models.Song {
 		AlbumArt:    albumArt,
 		Duration:    track.Attributes.DurationInMillis,
 		ReleaseDate: track.Attributes.ReleaseDate,
+		Explicit:    track.Attributes.ContentRating == "explicit",
 		Platforms: []models.PlatformLink{
 			{
 				Platform: "apple_music",
